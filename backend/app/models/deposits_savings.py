@@ -14,6 +14,7 @@ class FinancialProduct(TimestampMixin, db.Model):
     description = db.Column(db.Text)
     join_target = db.Column(db.String(255))
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    sync_locked = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text("0"))
     options = db.relationship("FinancialProductOption", back_populates="product",
                               cascade="all, delete-orphan", lazy="selectin")
 
@@ -29,6 +30,7 @@ class FinancialProductOption(db.Model):
     min_amount = db.Column(db.BigInteger, nullable=False)
     max_amount = db.Column(db.BigInteger, nullable=False)
     is_active = db.Column(db.Boolean, nullable=False, default=True)
+    sync_locked = db.Column(db.Boolean, nullable=False, default=False, server_default=db.text("0"))
     product = db.relationship("FinancialProduct", back_populates="options")
     preference_conditions = db.relationship("ProductPreferenceCondition", back_populates="option",
                                              cascade="all, delete-orphan", lazy="selectin")

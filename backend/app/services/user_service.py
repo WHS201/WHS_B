@@ -73,6 +73,9 @@ def change_password(
     # 기존 Access/Refresh Token 전체 무효화
     user.token_version += 1
 
+    from app.services.audit_service import audit
+    audit("PASSWORD_CHANGE", "users", user_id)
+
     try:
         db.session.commit()
 
@@ -184,6 +187,10 @@ def withdraw_user(
 
     try:
         # 금융 관련 데이터 삭제
+        from app.services.account_service import get_account_by_user_id
+        from app.services.audit_service import audit
+        get_account_by_user_id(user.user_id)
+        audit("USER_WITHDRAW", "users", user.user_id)
         delete_user_financial_data(
             user.user_id
         )

@@ -7,10 +7,12 @@ from marshmallow import ValidationError
 from app.errors.exceptions import BusinessException
 from app.extensions import db, jwt, migrate
 from dotenv import load_dotenv
+from werkzeug.exceptions import HTTPException
 
 
-def create_app():
-    load_dotenv()
+def create_app(test_config=None):
+    if test_config is None:
+        load_dotenv()
     app = Flask(__name__)
 
     # --- 설정 ---
@@ -67,6 +69,15 @@ def create_app():
         "KAKAO_REDIRECT_URI"
     )
 
+    app.config.update(
+        MAX_CONTENT_LENGTH=51 * 1024 * 1024,
+        FEATURE_RATE_LIMIT_ENABLED=True,
+        FEATURE_WRITE_REQUESTS_PER_MINUTE=int(os.environ.get("FEATURE_WRITE_REQUESTS_PER_MINUTE", "30")),
+        FEATURE_READ_REQUESTS_PER_MINUTE=int(os.environ.get("FEATURE_READ_REQUESTS_PER_MINUTE", "120")),
+    )
+    if test_config is not None:
+        app.config.update(test_config)
+
     # --- 확장 초기화 ---
     db.init_app(app)
     jwt.init_app(app)
@@ -80,6 +91,8 @@ def create_app():
     from app.models.user import User  # noqa
     from app.models.account import Account  # noqa
     from app.models.social_account import SocialAccount  # noqa
+    from app.models import features  # noqa
+    from app.services import audit_service  # noqa: registers transactional audit hooks
     from app.models.market import MarketAsset, MarketHolding, MarketTransaction  # noqa
     from app.models.deposits_savings import (  # noqa
         Deposit, DepositPreferenceCondition, EarlyTerminationRateRule,
@@ -118,9 +131,17 @@ def create_app():
     from app.routes.health import health_bp
     app.register_blueprint(health_bp)
 
+    from app.routes.features import features_bp
+    from app.routes.admin import admin_bp
+    app.register_blueprint(features_bp)
+    app.register_blueprint(admin_bp)
+    from app.services.feature_setup import register_commands
+    register_commands(app)
+
     # --- 공통 에러 핸들러 (개발 가이드 8번) ---
     @app.errorhandler(BusinessException)
     def handle_business_exception(e):
+        db.session.rollback()
         return jsonify({
             "success": False,
             "error": {"code": e.code, "message": e.message}
@@ -128,6 +149,7 @@ def create_app():
 
     @app.errorhandler(ValidationError)
     def handle_validation_error(e):
+        db.session.rollback()
         return jsonify({
             "success": False,
             "error": {
@@ -145,6 +167,10 @@ def create_app():
 
     @app.errorhandler(Exception)
     def handle_unexpected_error(e):
+        db.session.rollback()
+        if isinstance(e, HTTPException):
+            return jsonify({"success": False, "error": {"code": e.name.upper().replace(" ", "_"),
+                            "message": e.description}}), e.code
         # 예상 못한 서버 오류는 내부 정보를 노출하지 않는다 (개발 가이드 8번)
         app.logger.exception(e)
         return jsonify({

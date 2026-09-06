@@ -117,6 +117,8 @@ def reset_simulation_data(user_id):
         )
 
     try:
+        from app.services.audit_service import audit
+        audit("SIMULATION_RESET", "users", user_id, before={"balance": account.balance}, after={"balance": 0})
         delete_simulation_activity(user_id)
 
         account.balance = 0

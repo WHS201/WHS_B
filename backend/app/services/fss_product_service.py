@@ -75,9 +75,10 @@ def sync_products():
                 product = FinancialProduct.query.filter_by(external_product_code=code).first()
                 if product is None: product=FinancialProduct(external_product_code=code); db.session.add(product); created+=1
                 else: updated+=1
-                end=raw.get("dcls_end_day"); product.is_active=not end or end>=date.today().strftime("%Y%m%d")
-                product.bank_name=TARGET_BANKS[raw["kor_co_nm"]]; product.product_name=raw["fin_prdt_nm"]
-                product.product_type=product_type; product.description=raw.get("etc_note"); product.join_target=raw.get("join_member")
+                if not product.sync_locked:
+                    end=raw.get("dcls_end_day"); product.is_active=not end or end>=date.today().strftime("%Y%m%d")
+                    product.bank_name=TARGET_BANKS[raw["kor_co_nm"]]; product.product_name=raw["fin_prdt_nm"]
+                    product.product_type=product_type; product.description=raw.get("etc_note"); product.join_target=raw.get("join_member")
                 db.session.flush()
                 active_option_ids = set()
                 for item in options.get((raw["fin_co_no"],raw["fin_prdt_cd"]),[]):
@@ -86,6 +87,10 @@ def sync_products():
                     method="COMPOUND" if item.get("intr_rate_type")=="M" else "SIMPLE"
                     option=FinancialProductOption.query.filter_by(product_id=product.product_id,term_months=term,interest_method=method).first()
                     if option is None: option=FinancialProductOption(product_id=product.product_id,term_months=term,interest_method=method); db.session.add(option)
+                    if option.sync_locked:
+                        active_option_ids.add(option.option_id)
+                        options_count += 1
+                        continue
                     base=Decimal(str(item.get("intr_rate") or 0)); maximum=max(base,Decimal(str(item.get("intr_rate2") or 0)))
                     option.base_interest_rate=base; option.max_interest_rate=maximum; option.is_active=product.is_active
                     min_amount=100000 if product_type=="DEPOSIT" else 10000

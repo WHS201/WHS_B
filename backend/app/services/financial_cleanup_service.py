@@ -11,9 +11,24 @@ from app.models.deposits_savings import (
 from app.models.market import MarketHolding, MarketTransaction
 from app.models.monthly_cash_flow import MonthlyCashFlow
 from app.models.simulation_setting import SimulationSetting
+from app.models.features import SavingGoal, AssetSnapshot, UserBadge, ProfileVisibility, Inquiry, Attachment
+from app.models.user import User
+from app.extensions import db
 
 
 def delete_simulation_activity(user_id):
+    # Community/report/audit records survive a simulation reset. Inquiries and
+    # their private images are reset with finance data, avoiding stale ledger IDs.
+    for inquiry in Inquiry.query.filter_by(user_id=user_id).all():
+        Attachment.query.filter_by(inquiry_id=inquiry.inquiry_id).delete(synchronize_session=False)
+        db.session.delete(inquiry)
+    for model in (SavingGoal, AssetSnapshot, UserBadge, ProfileVisibility):
+        model.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    user = db.session.get(User, user_id)
+    if user:
+        user.representative_badge_id = None
+    db.session.flush()
+
     # 예금에 연결된 우대조건 삭제
     deposit_ids = [
         deposit_id
