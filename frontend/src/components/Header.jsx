@@ -69,9 +69,17 @@ function Header() {
             홈
           </Link>
 
-          <span>
+          <Link to="/dashboard">
+            대시보드
+          </Link>
+
+          <Link to="/goals">
             저축 목표
-          </span>
+          </Link>
+
+          <Link to="/simulation">
+            시뮬레이션
+          </Link>
 
           <Link to="/products">
             예·적금
@@ -81,9 +89,13 @@ function Header() {
             투자
           </Link>
 
-          <span>
+          <Link to="/transactions">
+            거래 내역
+          </Link>
+
+          <Link to="/community">
             커뮤니티
-          </span>
+          </Link>
 
         </nav>
 
@@ -92,6 +104,27 @@ function Header() {
 
           {loggedIn ? (
             <>
+              <Link
+                to="/profile"
+                className="header-text-link"
+              >
+                프로필
+              </Link>
+
+              <Link
+                to="/support"
+                className="header-text-link"
+              >
+                문의
+              </Link>
+
+              <Link
+                to="/admin"
+                className="header-text-link"
+              >
+                관리자
+              </Link>
+
               {isLocalAccount && (
                 <Link
                   to="/password"
