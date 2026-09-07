@@ -22,7 +22,42 @@ const SORTS = [['latest', '최신순'], ['likes', '추천순'], ['dislikes', '�
 const PAGE_SIZE = 10
 const emptyPost = { board_type: 'FREE', title: '', content: '' }
 
-const dateTime = (value) => (value ? value.slice(0, 16).replace('T', ' ') : '-')
+const dateTime = (value) => {
+  if (!value) {
+    return '-'
+  }
+
+  // 서버 시간이 UTC인데 Z가 없는 경우에도 UTC로 해석
+  const normalizedValue =
+    /Z$|[+-]\d{2}:\d{2}$/.test(value)
+      ? value
+      : `${value}Z`
+
+  const date = new Date(normalizedValue)
+
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+
+  const parts = new Intl.DateTimeFormat(
+    'ko-KR',
+    {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    },
+  ).formatToParts(date)
+
+  const get = (type) =>
+    parts.find((part) => part.type === type)?.value || ''
+
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+}
+
 const authorName = (item, myId, nameMap = {}) => (
   item.user_id === myId
     ? '나'

@@ -49,6 +49,7 @@ def profile(target_id, viewer_id):
     flags = visibility(target_id)
     result = {"user_id": user.user_id, "nickname": user.nickname}
     if own:
+        result["role"] = user.role
         result["visibility"] = flags
     if own or flags["show_joined_at"]:
         result["created_at"] = user.created_at.isoformat() + "Z"

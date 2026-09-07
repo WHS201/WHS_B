@@ -21,7 +21,40 @@ const SECTIONS = [
   ['audit', '감사 로그'],
 ]
 
-const dt = (value) => (value ? value.slice(0, 16).replace('T', ' ') : '-')
+const dt = (value) => {
+  if (!value) {
+    return '-'
+  }
+
+  const normalizedValue =
+    /Z$|[+-]\d{2}:\d{2}$/.test(value)
+      ? value
+      : `${value}Z`
+
+  const date = new Date(normalizedValue)
+
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+
+  const parts = new Intl.DateTimeFormat(
+    'ko-KR',
+    {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    },
+  ).formatToParts(date)
+
+  const get = (type) =>
+    parts.find((part) => part.type === type)?.value || ''
+
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+}
 
 function Pager({ page, total, setPage }) {
   const pages = Math.max(1, Math.ceil((total || 0) / 20))

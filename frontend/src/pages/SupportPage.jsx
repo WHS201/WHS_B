@@ -7,7 +7,41 @@ import {
   MOCKS_ENABLED, createInquiry, getApiError, getInquiries, getMyReports,
 } from '../api/features'
 
-const dt = (value) => (value ? value.slice(0, 16).replace('T', ' ') : '-')
+const dt = (value) => {
+  if (!value) {
+    return '-'
+  }
+
+  const normalizedValue =
+    /Z$|[+-]\d{2}:\d{2}$/.test(value)
+      ? value
+      : `${value}Z`
+
+  const date = new Date(normalizedValue)
+
+  if (Number.isNaN(date.getTime())) {
+    return '-'
+  }
+
+  const parts = new Intl.DateTimeFormat(
+    'ko-KR',
+    {
+      timeZone: 'Asia/Seoul',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    },
+  ).formatToParts(date)
+
+  const get = (type) =>
+    parts.find((part) => part.type === type)?.value || ''
+
+  return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
+}
+
 const INQUIRY_LABEL = { PENDING: '접수됨', ANSWERED: '답변 완료' }
 const REPORT_LABEL = { PENDING: '접수됨', RESOLVED: '조치 완료', REJECTED: '반려' }
 
@@ -68,8 +102,27 @@ function InquiryTab() {
           <input id="iq_title" type="text" maxLength={100} required value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
           <label className="field-label" htmlFor="iq_content">내용</label>
           <textarea id="iq_content" maxLength={5000} required rows={5} value={form.content} onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))} />
-          <label className="field-label" htmlFor="iq_ref">관련 원장 거래 ID (선택)</label>
-          <input id="iq_ref" type="number" min="1" value={form.related_ledger_transaction_id} onChange={(e) => setForm((f) => ({ ...f, related_ledger_transaction_id: e.target.value }))} placeholder="거래 내역 > 금융 원장의 거래 번호" />
+          <label className="field-label" htmlFor="iq_ref">
+            관련 금융 원장 거래 번호 (선택)
+          </label>
+
+          <input
+            id="iq_ref"
+            type="number"
+            min="1"
+            value={form.related_ledger_transaction_id}
+            onChange={(e) =>
+              setForm((f) => ({
+                ...f,
+                related_ledger_transaction_id: e.target.value,
+              }))
+            }
+            placeholder="특정 거래 문의인 경우 거래내역의 거래 번호를 입력하세요"
+          />
+
+          <p className="mini-sub">
+            거래와 관련 없는 문의라면 입력하지 않아도 됩니다.
+          </p>
           <Notice type="error">{formError}</Notice>
           <button type="submit" className="service-primary-button" disabled={busy}>문의 접수</button>
         </form>

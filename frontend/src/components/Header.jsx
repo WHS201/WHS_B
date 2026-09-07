@@ -1,4 +1,9 @@
 import {
+  useEffect,
+  useState,
+} from 'react'
+
+import {
   Link,
   useNavigate,
 } from 'react-router-dom'
@@ -6,6 +11,10 @@ import {
 import {
   logout,
 } from '../api/auth'
+
+import {
+  getMyProfile,
+} from '../api/features'
 
 import useAuth from '../hooks/useAuth'
 import { showToast } from './Toast'
@@ -16,36 +25,61 @@ import {
 
 
 function Header() {
-  const navigate =
-    useNavigate()
+  const navigate = useNavigate()
 
   const {
     loggedIn,
     provider,
   } = useAuth()
 
+  const [
+    role,
+    setRole,
+  ] = useState(null)
 
-  const handleLogout =
-    async () => {
-      try {
-        await logout()
-      } catch {
-        // 서버 로그아웃 요청이 실패하더라도
-        // 브라우저에 저장된 로그인 정보는 제거한다.
-      }
 
-      removeTokens()
-
-      showToast(
-        '로그아웃되었습니다.',
-      )
-
-      navigate('/')
+  // 로그인한 사용자의 권한 조회
+  useEffect(() => {
+    if (!loggedIn) {
+      setRole(null)
+      return
     }
+
+    getMyProfile()
+      .then((response) => {
+        setRole(
+          response?.data?.role ?? null,
+        )
+      })
+      .catch(() => {
+        setRole(null)
+      })
+  }, [loggedIn])
+
+
+  const handleLogout = async () => {
+    try {
+      await logout()
+    } catch {
+      // 서버 로그아웃 요청이 실패하더라도
+      // 브라우저에 저장된 로그인 정보는 제거한다.
+    }
+
+    removeTokens()
+
+    showToast(
+      '로그아웃되었습니다.',
+    )
+
+    navigate('/')
+  }
 
 
   const isLocalAccount =
     provider === 'LOCAL'
+
+  const isAdmin =
+    role === 'ADMIN'
 
 
   return (
@@ -77,10 +111,6 @@ function Header() {
             저축 목표
           </Link>
 
-          <Link to="/simulation">
-            시뮬레이션
-          </Link>
-
           <Link to="/products">
             예·적금
           </Link>
@@ -97,58 +127,62 @@ function Header() {
             커뮤니티
           </Link>
 
+
+          {loggedIn && (
+            <details className="header-more-menu">
+
+              <summary>
+                더보기
+              </summary>
+
+              <div className="header-more-dropdown">
+
+                <Link to="/simulation">
+                  시뮬레이션
+                </Link>
+
+                <Link to="/profile">
+                  프로필
+                </Link>
+
+                <Link to="/support">
+                  문의
+                </Link>
+
+                {isAdmin && (
+                  <Link to="/admin">
+                    관리자
+                  </Link>
+                )}
+
+                {isLocalAccount && (
+                  <Link to="/password">
+                    비밀번호 변경
+                  </Link>
+                )}
+
+                <Link to="/withdraw">
+                  회원탈퇴
+                </Link>
+
+              </div>
+
+            </details>
+          )}
+
         </nav>
 
 
         <div className="header-actions">
 
           {loggedIn ? (
-            <>
-              <Link
-                to="/profile"
-                className="header-text-link"
-              >
-                프로필
-              </Link>
-
-              <Link
-                to="/support"
-                className="header-text-link"
-              >
-                문의
-              </Link>
-
-              <Link
-                to="/admin"
-                className="header-text-link"
-              >
-                관리자
-              </Link>
-
-              {isLocalAccount && (
-                <Link
-                  to="/password"
-                  className="header-text-link"
-                >
-                  비밀번호 변경
-                </Link>
-              )}
-
-              <Link
-                to="/withdraw"
-                className="header-text-link"
-              >
-                회원탈퇴
-              </Link>
-
-              <button
-                type="button"
-                className="header-primary-button"
-                onClick={handleLogout}
-              >
-                로그아웃
-              </button>
-            </>
+            <button
+              type="button"
+              className="header-primary-button"
+              onClick={handleLogout}
+            >
+              로그아웃
+            </button>
           ) : (
             <>
               <Link
