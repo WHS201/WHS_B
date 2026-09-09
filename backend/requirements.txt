@@ -11,3 +11,4 @@ requests==2.34.2
 gunicorn==23.0.0
 Pillow==12.3.0
 tzdata==2026.3
+exchange-calendars==4.13.2

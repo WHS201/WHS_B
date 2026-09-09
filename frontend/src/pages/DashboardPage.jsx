@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import PageShell from '../components/PageShell'
 import { Empty, Loading, Notice } from '../components/Ui'
 import AssetAllocationBar from '../components/AssetAllocationBar'
+import AssetHistoryChart from '../components/AssetHistoryChart'
 import { rate, shortDate, won } from '../utils/format'
 import { MOCKS_ENABLED, getApiError, getDashboard } from '../api/features'
 
@@ -77,6 +78,8 @@ function DashboardPage() {
               <small>수입 {won(data.monthly_income)} · 지출 {won(data.monthly_expense)}</small>
             </div>
           </div>
+
+          <AssetHistoryChart />
 
           <div className="dash-section">
             <h2>자산 구성</h2>

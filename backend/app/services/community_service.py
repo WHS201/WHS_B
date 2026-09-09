@@ -55,7 +55,7 @@ def live_comment(comment_id, owner=None, lock=False):
     return row
 
 
-def post_data(post):
+def post_data(post, viewer_id=None):
     data = serialize(
         post,
         exclude=("deleted_at",),
@@ -75,6 +75,16 @@ def post_data(post):
         .group_by(PostReaction.reaction_type)
     ):
         data["reactions"][kind] = count
+
+    # 게시글 작성자가 아닌, 현재 조회 중인 사용자의 반응을 반환합니다.
+    data["my_reaction"] = None
+    if viewer_id is not None:
+        my_reaction = PostReaction.query.filter_by(
+            post_id=post.post_id,
+            user_id=viewer_id,
+        ).first()
+        if my_reaction is not None:
+            data["my_reaction"] = my_reaction.reaction_type
 
     data["attachments"] = attachment_list(
         post_id=post.post_id,
@@ -111,7 +121,7 @@ def inquiry_data(row):
     }
 
 
-def list_posts():
+def list_posts(viewer_id=None):
     query = Post.query.filter_by(
         deleted_at=None,
     )
@@ -213,7 +223,7 @@ def list_posts():
         query.order_by(
             Post.post_id.desc(),
         ),
-        post_data,
+        lambda post: post_data(post, viewer_id=viewer_id),
     )
 
 
@@ -252,7 +262,7 @@ def save_post(
 
     db.session.commit()
 
-    return post_data(row)
+    return post_data(row, viewer_id=user_id)
 
 
 def save_comment(
@@ -343,7 +353,7 @@ def react(
     post_id,
     kind,
 ):
-    live_post(
+    post = live_post(
         post_id,
         lock=True,
     )
@@ -373,6 +383,8 @@ def react(
 
     return {
         "reaction_type": kind,
+        # 저장 후의 게시글, 반응 개수, 내 선택 상태를 한 번에 반환합니다.
+        **post_data(post, viewer_id=user_id),
     }
 
 

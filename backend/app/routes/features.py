@@ -157,7 +157,7 @@ def my_badges():
 @features_bp.get("/posts")
 @endpoint()
 def posts():
-    return success_response(community.list_posts())
+    return success_response(community.list_posts(viewer_id=user_id()))
 
 
 @features_bp.post("/posts")
@@ -169,7 +169,10 @@ def create_post():
 @features_bp.get("/posts/<int:post_id>")
 @endpoint()
 def post_detail(post_id):
-    return success_response(community.post_data(community.live_post(post_id)))
+    return success_response(community.post_data(
+        community.live_post(post_id),
+        viewer_id=user_id(),
+    ))
 
 
 @features_bp.patch("/posts/<int:post_id>")

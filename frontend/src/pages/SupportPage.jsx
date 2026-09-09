@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import PageShell from '../components/PageShell'
+import Pagination from '../components/Pagination'
+import usePagedList from '../hooks/usePagedList'
 import { showToast } from '../components/Toast'
 import { Empty, Loading, Notice } from '../components/Ui'
 import { shortDate } from '../utils/format'
@@ -42,31 +44,28 @@ const dt = (value) => {
   return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`
 }
 
+const PAGE_SIZE = 10
+
 const INQUIRY_LABEL = { PENDING: '접수됨', ANSWERED: '답변 완료' }
 const REPORT_LABEL = { PENDING: '접수됨', RESOLVED: '조치 완료', REJECTED: '반려' }
 
 function InquiryTab() {
-  const [list, setList] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { items: list, total, page, totalPages, loading, error, goToPage, reload, retry } = usePagedList(getInquiries, PAGE_SIZE)
   const [selected, setSelected] = useState(null)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState({ title: '', content: '', related_ledger_transaction_id: '' })
   const [formError, setFormError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const load = () => {
-    setLoading(true)
-    setError('')
-    getInquiries({ page: 1, size: 50 })
-      .then((res) => { setList(res.data.items); setLoading(false) })
-      .catch((err) => { setError(getApiError(err)); setLoading(false) })
+  const changePage = (nextPage) => {
+    if (busy || loading) return
+    setSelected(null)
+    goToPage(nextPage)
   }
-
-  useEffect(load, [])
 
   const submit = async (event) => {
     event.preventDefault()
+    if (busy) return
     setBusy(true)
     setFormError('')
     const payload = { title: form.title.trim(), content: form.content.trim() }
@@ -78,7 +77,8 @@ function InquiryTab() {
       setShowForm(false)
       setForm({ title: '', content: '', related_ledger_transaction_id: '' })
       showToast('문의를 접수했습니다.')
-      load()
+      setSelected(null)
+      reload(1)
     } catch (submitError) {
       setFormError(getApiError(submitError))
     } finally {
@@ -90,7 +90,7 @@ function InquiryTab() {
     <>
       <div className="goal-row-head" style={{ marginBottom: 14 }}>
         <span className="mini-sub">시뮬레이션 중 발생한 거래 문제를 관리자에게 문의할 수 있습니다.</span>
-        <button type="button" className="service-primary-button" onClick={() => { setShowForm((v) => !v); setFormError('') }}>
+        <button type="button" className="service-primary-button" disabled={busy} onClick={() => { setShowForm((v) => !v); setFormError('') }}>
           {showForm ? '작성 닫기' : '새 문의'}
         </button>
       </div>
@@ -130,7 +130,10 @@ function InquiryTab() {
 
       <Notice type="error">{error}</Notice>
 
-      {loading ? <Loading /> : list.length === 0 ? <Empty>접수한 문의가 없습니다.</Empty> : (
+      {!loading && !error && <p className="mini-sub">전체 {total}건</p>}
+      {loading ? <Loading /> : error ? (
+        <button type="button" className="btn-neutral" onClick={retry} disabled={busy}>문의 다시 불러오기</button>
+      ) : list.length === 0 ? <Empty>접수한 문의가 없습니다.</Empty> : (
         <ul className="tx-list">
           {list.map((inquiry) => {
             const open = selected === inquiry.inquiry_id
@@ -161,42 +164,40 @@ function InquiryTab() {
           })}
         </ul>
       )}
+      <Pagination label="문의" page={page} totalPages={totalPages} disabled={busy || loading} onPageChange={changePage} />
     </>
   )
 }
 
 function ReportTab() {
-  const [list, setList] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    getMyReports({ page: 1, size: 50 })
-      .then((res) => { setList(res.data.items); setLoading(false) })
-      .catch((err) => { setError(getApiError(err)); setLoading(false) })
-  }, [])
-
-  if (loading) return <Loading />
-  if (error) return <Notice type="error">{error}</Notice>
-  if (list.length === 0) return <Empty>접수한 신고가 없습니다.</Empty>
+  const { items: list, total, page, totalPages, loading, error, goToPage, retry } = usePagedList(getMyReports, PAGE_SIZE)
 
   return (
-    <ul className="tx-list">
-      {list.map((report) => (
-        <li key={report.report_id} className="tx-item">
-          <div className="tx-main" style={{ gridTemplateColumns: '1fr auto', cursor: 'default' }}>
-            <span>
-              <span className="tx-type">{report.target_type === 'POST' ? '게시글' : '댓글'} #{report.target_id}</span>
-              <span className="tx-sub">{report.reason}</span>
-              <span className="tx-sub">{shortDate(report.created_at)}{report.resolution_reason ? ` · 처리 사유: ${report.resolution_reason}` : ''}</span>
-            </span>
-            <span className={`goal-state ${report.status === 'RESOLVED' ? 'done' : report.status === 'REJECTED' ? 'active' : 'active'}`}>
-              {REPORT_LABEL[report.status] || report.status}
-            </span>
-          </div>
-        </li>
-      ))}
-    </ul>
+    <>
+      <Notice type="error">{error}</Notice>
+      {!loading && !error && <p className="mini-sub">전체 {total}건</p>}
+      {loading ? <Loading /> : error ? (
+        <button type="button" className="btn-neutral" onClick={retry}>신고 다시 불러오기</button>
+      ) : list.length === 0 ? <Empty>접수한 신고가 없습니다.</Empty> : (
+        <ul className="tx-list">
+          {list.map((report) => (
+            <li key={report.report_id} className="tx-item">
+              <div className="tx-main" style={{ gridTemplateColumns: '1fr auto', cursor: 'default' }}>
+                <span>
+                  <span className="tx-type">{report.target_type === 'POST' ? '게시글' : '댓글'} #{report.target_id}</span>
+                  <span className="tx-sub">{report.reason}</span>
+                  <span className="tx-sub">{shortDate(report.created_at)}{report.resolution_reason ? ` · 처리 사유: ${report.resolution_reason}` : ''}</span>
+                </span>
+                <span className={`goal-state ${report.status === 'RESOLVED' ? 'done' : 'active'}`}>
+                  {REPORT_LABEL[report.status] || report.status}
+                </span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Pagination label="신고" page={page} totalPages={totalPages} disabled={loading} onPageChange={goToPage} />
+    </>
   )
 }
 

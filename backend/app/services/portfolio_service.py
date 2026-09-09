@@ -106,19 +106,51 @@ def badge_data(user_id):
 
 def dashboard(user_id):
     from app.services.account_service import get_account_by_user_id
+
     get_account_by_user_id(user_id)
     result = valuation(user_id)
     refresh_achievements(user_id, result)
     db.session.commit()
+
     setting = SimulationSetting.query.filter_by(user_id=user_id).first()
-    result.update({"goals": [goal_data(g, result["total_assets"]) for g in SavingGoal.query.filter_by(user_id=user_id)],
-                   "badges": badge_data(user_id),
-                   "monthly_income": setting.monthly_income if setting else 0,
-                   "monthly_expense": setting.monthly_expense if setting else 0,
-                   "monthly_surplus": setting.monthly_income - setting.monthly_expense if setting else 0,
-                   "active_deposits": [serialize(x) for x in Deposit.query.filter_by(user_id=user_id, status="ACTIVE")],
-                   "active_savings": [serialize(x) for x in Saving.query.filter_by(user_id=user_id, status="ACTIVE")],
-                   "recent_trades": [serialize(x) for x in MarketTransaction.query.filter_by(user_id=user_id).order_by(MarketTransaction.executed_at.desc()).limit(5)]})
+
+    result.update({
+        "goals": [
+            goal_data(g, result["total_assets"])
+            for g in SavingGoal.query.filter_by(user_id=user_id)
+        ],
+        "badges": badge_data(user_id),
+        "monthly_income": setting.monthly_income if setting else 0,
+        "monthly_expense": setting.monthly_expense if setting else 0,
+        "monthly_surplus": (
+            setting.monthly_income - setting.monthly_expense if setting else 0
+        ),
+        # 기존 예금 정보에 연결된 상품명과 은행명을 추가합니다.
+        "active_deposits": [
+            {
+                **serialize(x),
+                "product_name": x.product.product_name,
+                "bank_name": x.product.bank_name,
+            }
+            for x in Deposit.query.filter_by(user_id=user_id, status="ACTIVE")
+        ],
+        # 기존 적금 정보에도 같은 방식으로 이름을 추가합니다.
+        "active_savings": [
+            {
+                **serialize(x),
+                "product_name": x.product.product_name,
+                "bank_name": x.product.bank_name,
+            }
+            for x in Saving.query.filter_by(user_id=user_id, status="ACTIVE")
+        ],
+        "recent_trades": [
+            serialize(x)
+            for x in MarketTransaction.query.filter_by(user_id=user_id)
+            .order_by(MarketTransaction.executed_at.desc())
+            .limit(5)
+        ],
+    })
+
     return result
 
 

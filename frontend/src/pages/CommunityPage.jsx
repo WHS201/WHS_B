@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import PageShell from '../components/PageShell'
+import Pagination from '../components/Pagination'
+import usePagedList from '../hooks/usePagedList'
 import { confirmAction, showToast } from '../components/Toast'
 import { Empty, Loading, Notice } from '../components/Ui'
 import {
@@ -20,6 +22,7 @@ const BOARDS = [
 const BOARD_LABEL = { FREE: '자유', KR_STOCK: '국내주식', US_STOCK: '미국주식', DEPOSIT_SAVING: '예·적금' }
 const SORTS = [['latest', '최신순'], ['likes', '추천순'], ['dislikes', '비추천순']]
 const PAGE_SIZE = 10
+const COMMENT_PAGE_SIZE = 20
 const emptyPost = { board_type: 'FREE', title: '', content: '' }
 
 const dateTime = (value) => {
@@ -70,9 +73,39 @@ function Author({ item, myId, nameMap }) {
   return <Link to={`/profile/${item.user_id}`} className="author-link">{name}</Link>
 }
 
+function ReportForm({ target, reason, error, busy, onChange, onSubmit, onCancel }) {
+  const label = target.target_type === 'COMMENT' ? '댓글 신고' : '게시글 신고'
+  const inputId = `report_reason_${target.target_type}_${target.target_id}`
+
+  return (
+    <form className="report-form" onSubmit={onSubmit} aria-label={label}>
+      <label className="field-label" htmlFor={inputId}>{label} 사유</label>
+      <textarea
+        id={inputId}
+        maxLength={1000}
+        required
+        disabled={busy}
+        value={reason}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="신고 사유를 입력해 주세요."
+      />
+      <Notice type="error">{error}</Notice>
+      <div className="button-row goal-form-buttons">
+        <button type="submit" className="service-primary-button" disabled={busy || !reason.trim()}>신고 접수</button>
+        <button type="button" className="service-secondary-button" onClick={onCancel} disabled={busy}>취소</button>
+      </div>
+    </form>
+  )
+}
+
 function PostDetail({ postId, myId, onClose }) {
   const [post, setPost] = useState(null)
-  const [comments, setComments] = useState([])
+  const loadCommentPage = useCallback((params) => getComments(postId, params), [postId])
+  const {
+    items: comments, total: commentTotal, page: commentPage, totalPages: commentPages,
+    loading: commentsLoading, error: commentsError,
+    goToPage: goToCommentPage, reload: reloadComments, retry: retryComments,
+  } = usePagedList(loadCommentPage, COMMENT_PAGE_SIZE)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -82,28 +115,23 @@ function PostDetail({ postId, myId, onClose }) {
   const [commentText, setCommentText] = useState('')
   const [editingCommentId, setEditingCommentId] = useState(null)
   const [editCommentText, setEditCommentText] = useState('')
-  const [showReport, setShowReport] = useState(false)
+  // 신고 대상의 종류와 번호를 함께 저장해 게시글과 댓글을 구분합니다.
+  const [reportTarget, setReportTarget] = useState(null)
   const [reportReason, setReportReason] = useState('')
-  // post_data() 에 조회자 본인 반응이 없어(백엔드 갭) 세션 동안 로컬로 추적한다.
-  const [myReaction, setMyReaction] = useState(null)
+  const [reportError, setReportError] = useState('')
   const [nameMap, setNameMap] = useState({})
-
-  const learnNames = (rows) => {
-    resolveNicknames(rows.map((row) => row.user_id)).then((map) => setNameMap((prev) => ({ ...prev, ...map })))
-  }
+  // 서버가 반환한 게시글의 내 반응을 버튼 표시와 취소 판단에 사용합니다.
+  const myReaction = post?.my_reaction ?? null
 
   useEffect(() => {
     let active = true
     setLoading(true)
     setError('')
 
-    Promise.all([getPost(postId), getComments(postId, { page: 1, size: 100 })])
-      .then(([postRes, commentRes]) => {
+    getPost(postId)
+      .then((postRes) => {
         if (!active) return
         setPost(postRes.data)
-        setMyReaction(postRes.data.my_reaction || null)
-        setComments(commentRes.data.items)
-        learnNames([postRes.data, ...commentRes.data.items])
         setLoading(false)
       })
       .catch((loadError) => {
@@ -115,25 +143,46 @@ function PostDetail({ postId, myId, onClose }) {
     return () => { active = false }
   }, [postId])
 
+  useEffect(() => {
+    let active = true
+    const rows = post ? [post, ...comments] : comments
+    resolveNicknames(rows.map((row) => row.user_id))
+      .then((map) => { if (active) setNameMap((prev) => ({ ...prev, ...map })) })
+      .catch(() => {})
+    return () => { active = false }
+  }, [post, comments])
+
   const refreshPost = async () => {
     const res = await getPost(postId)
     setPost(res.data)
   }
 
-  const refreshComments = async () => {
-    const res = await getComments(postId, { page: 1, size: 100 })
-    setComments(res.data.items)
-    learnNames(res.data.items)
+  const changeCommentPage = (nextPage) => {
+    if (busy || commentsLoading) return
+    setEditingCommentId(null)
+    setEditCommentText('')
+    if (reportTarget?.target_type === 'COMMENT') {
+      setReportTarget(null)
+      setReportReason('')
+      setReportError('')
+    }
+    goToCommentPage(nextPage)
   }
 
   const react = async (kind) => {
+    if (busy) return
     const next = myReaction === kind ? 'NONE' : kind
     setBusy(true)
     setError('')
     try {
-      await reactToPost(postId, next)
-      setMyReaction(next === 'NONE' ? null : next)
-      await refreshPost()
+      const response = await reactToPost(postId, next)
+      if (response.data?.post_id === postId) {
+        // 저장된 선택 상태와 반응 개수를 같은 응답으로 갱신합니다.
+        setPost(response.data)
+      } else {
+        // 기존 목(mock) 응답처럼 반응 종류만 반환하는 경우 다시 조회합니다.
+        await refreshPost()
+      }
     } catch (reactError) {
       setError(getApiError(reactError))
     } finally {
@@ -204,12 +253,20 @@ function PostDetail({ postId, myId, onClose }) {
 
   const submitComment = async (event) => {
     event.preventDefault()
-    if (!commentText.trim()) return
+    if (busy || commentsLoading || !commentText.trim()) return
     setBusy(true)
+    setError('')
     try {
       await createComment(postId, { content: commentText.trim() })
       setCommentText('')
-      await refreshComments()
+      setEditingCommentId(null)
+      setEditCommentText('')
+      if (reportTarget?.target_type === 'COMMENT') {
+        setReportTarget(null)
+        setReportReason('')
+        setReportError('')
+      }
+      reloadComments('last')
       showToast('댓글을 등록했습니다.')
     } catch (commentError) {
       setError(getApiError(commentError))
@@ -219,13 +276,14 @@ function PostDetail({ postId, myId, onClose }) {
   }
 
   const saveComment = async (commentId) => {
-    if (!editCommentText.trim()) return
+    if (busy || commentsLoading || !editCommentText.trim()) return
     setBusy(true)
+    setError('')
     try {
       await updateComment(commentId, { content: editCommentText.trim() })
       setEditingCommentId(null)
       setEditCommentText('')
-      await refreshComments()
+      reloadComments()
     } catch (editError) {
       setError(getApiError(editError))
     } finally {
@@ -234,26 +292,52 @@ function PostDetail({ postId, myId, onClose }) {
   }
 
   const removeComment = async (commentId) => {
+    if (busy || commentsLoading) return
     if (!await confirmAction('댓글을 삭제할까요?')) return
+    setBusy(true)
+    setError('')
     try {
       await deleteComment(commentId)
-      await refreshComments()
+      reloadComments()
     } catch (removeError) {
       setError(getApiError(removeError))
+    } finally {
+      setBusy(false)
     }
+  }
+
+  const toggleReport = (targetType, targetId) => {
+    if (busy || myId == null) return
+    const isSameTarget = reportTarget?.target_type === targetType
+      && reportTarget.target_id === targetId
+    setReportTarget(isSameTarget ? null : { target_type: targetType, target_id: targetId })
+    setReportReason('')
+    setReportError('')
+  }
+
+  const closeReport = () => {
+    if (busy) return
+    setReportTarget(null)
+    setReportReason('')
+    setReportError('')
   }
 
   const submitReport = async (event) => {
     event.preventDefault()
-    if (!reportReason.trim()) return
+    if (busy || !reportTarget || !reportReason.trim()) return
     setBusy(true)
+    setReportError('')
     try {
-      await reportContent({ target_type: 'POST', target_id: postId, reason: reportReason.trim() })
-      setShowReport(false)
+      await reportContent({
+        target_type: reportTarget.target_type,
+        target_id: reportTarget.target_id,
+        reason: reportReason.trim(),
+      })
+      setReportTarget(null)
       setReportReason('')
       showToast('신고가 접수되었습니다.')
     } catch (reportError) {
-      setError(getApiError(reportError))
+      setReportError(getApiError(reportError))
     } finally {
       setBusy(false)
     }
@@ -327,6 +411,7 @@ function PostDetail({ postId, myId, onClose }) {
             <button
               type="button"
               className={`reaction-btn${myReaction === 'LIKE' ? ' active' : ''}`}
+              aria-pressed={myReaction === 'LIKE'}
               disabled={busy}
               onClick={() => react('LIKE')}
             >
@@ -335,6 +420,7 @@ function PostDetail({ postId, myId, onClose }) {
             <button
               type="button"
               className={`reaction-btn down${myReaction === 'DISLIKE' ? ' active' : ''}`}
+              aria-pressed={myReaction === 'DISLIKE'}
               disabled={busy}
               onClick={() => react('DISLIKE')}
             >
@@ -349,26 +435,36 @@ function PostDetail({ postId, myId, onClose }) {
                 <button type="button" className="btn-danger" onClick={removePost}>삭제</button>
               </>
             )}
-            {post.user_id !== myId && (
-              <button type="button" className="btn-neutral" onClick={() => setShowReport((value) => !value)}>신고</button>
+            {myId != null && post.user_id !== myId && (
+              <button
+                type="button"
+                className="btn-neutral"
+                disabled={busy}
+                aria-expanded={reportTarget?.target_type === 'POST' && reportTarget.target_id === postId}
+                onClick={() => toggleReport('POST', postId)}
+              >신고</button>
             )}
           </div>
 
-          {showReport && (
-            <form className="report-form" onSubmit={submitReport}>
-              <label className="field-label" htmlFor="report_reason">신고 사유</label>
-              <textarea id="report_reason" maxLength={1000} required value={reportReason} onChange={(event) => setReportReason(event.target.value)} placeholder="신고 사유를 입력해 주세요." />
-              <div className="button-row goal-form-buttons">
-                <button type="submit" className="service-primary-button" disabled={busy}>신고 접수</button>
-                <button type="button" className="service-secondary-button" onClick={() => setShowReport(false)}>취소</button>
-              </div>
-            </form>
+          {reportTarget?.target_type === 'POST' && reportTarget.target_id === postId && (
+            <ReportForm
+              target={reportTarget}
+              reason={reportReason}
+              error={reportError}
+              busy={busy}
+              onChange={setReportReason}
+              onSubmit={submitReport}
+              onCancel={closeReport}
+            />
           )}
 
-          <div className="comment-section">
-            <h3>댓글 {comments.length}</h3>
+          <div className="comment-section" aria-busy={commentsLoading}>
+            <h3>댓글 {commentTotal}</h3>
+            <Notice type="error">{commentsError}</Notice>
 
-            {comments.length === 0 ? <Empty>첫 댓글을 남겨보세요.</Empty> : (
+            {commentsLoading ? <Loading /> : commentsError ? (
+              <button type="button" className="btn-neutral" onClick={retryComments} disabled={busy}>댓글 다시 불러오기</button>
+            ) : comments.length === 0 ? <Empty>첫 댓글을 남겨보세요.</Empty> : (
               <ul className="comment-list">
                 {comments.map((comment) => (
                   <li key={comment.comment_id} className="comment-item">
@@ -391,9 +487,30 @@ function PostDetail({ postId, myId, onClose }) {
                         <div className="comment-body">{comment.content}</div>
                         {comment.user_id === myId && (
                           <div className="comment-actions">
-                            <button type="button" onClick={() => { setEditingCommentId(comment.comment_id); setEditCommentText(comment.content) }}>수정</button>
-                            <button type="button" onClick={() => removeComment(comment.comment_id)}>삭제</button>
+                            <button type="button" disabled={busy} onClick={() => { setEditingCommentId(comment.comment_id); setEditCommentText(comment.content) }}>수정</button>
+                            <button type="button" disabled={busy} onClick={() => removeComment(comment.comment_id)}>삭제</button>
                           </div>
+                        )}
+                        {myId != null && comment.user_id !== myId && (
+                          <div className="comment-actions">
+                            <button
+                              type="button"
+                              disabled={busy}
+                              aria-expanded={reportTarget?.target_type === 'COMMENT' && reportTarget.target_id === comment.comment_id}
+                              onClick={() => toggleReport('COMMENT', comment.comment_id)}
+                            >신고</button>
+                          </div>
+                        )}
+                        {reportTarget?.target_type === 'COMMENT' && reportTarget.target_id === comment.comment_id && (
+                          <ReportForm
+                            target={reportTarget}
+                            reason={reportReason}
+                            error={reportError}
+                            busy={busy}
+                            onChange={setReportReason}
+                            onSubmit={submitReport}
+                            onCancel={closeReport}
+                          />
                         )}
                       </>
                     )}
@@ -401,6 +518,14 @@ function PostDetail({ postId, myId, onClose }) {
                 ))}
               </ul>
             )}
+
+            <Pagination
+              label="댓글"
+              page={commentPage}
+              totalPages={commentPages}
+              disabled={busy || commentsLoading}
+              onPageChange={changeCommentPage}
+            />
 
             <form className="comment-form" onSubmit={submitComment}>
               <textarea
@@ -410,7 +535,7 @@ function PostDetail({ postId, myId, onClose }) {
                 onChange={(event) => setCommentText(event.target.value)}
                 placeholder="댓글을 입력하세요."
               />
-              <button type="submit" disabled={busy}>댓글 등록</button>
+              <button type="submit" disabled={busy || commentsLoading}>댓글 등록</button>
             </form>
           </div>
         </>
@@ -524,7 +649,7 @@ function CommunityPage() {
       )}
 
       {selectedId !== null ? (
-        <PostDetail postId={selectedId} myId={myId} onClose={() => setSelectedId(null)} />
+        <PostDetail key={selectedId} postId={selectedId} myId={myId} onClose={() => setSelectedId(null)} />
       ) : (
         <>
           {showForm && (

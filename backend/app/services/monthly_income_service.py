@@ -1,3 +1,6 @@
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from app.extensions import db
 
 from app.models.monthly_cash_flow import MonthlyCashFlow
@@ -49,6 +52,25 @@ def pay_monthly_income(user_id, year_month):
             message="유효하지 않은 연월입니다.",
             status_code=400
         )
+
+    # 서버의 한국 시간을 기준으로 현재 지급 가능한 월 결정
+    payable_year_month = datetime.now(
+        ZoneInfo("Asia/Seoul")
+    ).strftime("%Y-%m")
+
+    # 과거 월 소급 지급과 미래 월 선지급 차단
+    if year_month != payable_year_month:
+        raise BusinessException(
+            code="MONTHLY_INCOME_MONTH_NOT_PAYABLE",
+            message=(
+                f"월 정기 수입은 현재 월({payable_year_month})만 "
+                "지급할 수 있습니다."
+            ),
+            status_code=400
+        )
+
+    # 이후 조회와 저장에는 서버가 결정한 지급월 사용
+    year_month = payable_year_month
 
     # 2. 시뮬레이션 설정 조회
     setting = SimulationSetting.query.filter_by(
