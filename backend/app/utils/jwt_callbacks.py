@@ -138,10 +138,13 @@ def register_jwt_callbacks(jwt):
         jwt_header,
         jwt_payload,
     ):
+        user = _get_user(jwt_payload)
+        message = ("정지된 계정입니다." if user and user.status == UserStatus.SUSPENDED
+                   else "계정 상태가 변경되어 다시 로그인해야 합니다.")
         return jsonify({
             "success": False,
             "error": {
                 "code": ErrorCode.TOKEN_REVOKED,
-                "message": "이미 무효화된 토큰입니다.",
+                "message": message,
             },
         }), 401

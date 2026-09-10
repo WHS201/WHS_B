@@ -9,6 +9,7 @@ from app.routes.features import body, ledger_data
 from app.schemas import features as schemas
 from app.services.feature_common import endpoint, user_id, get_row, page, fail, serialize
 from app.services import admin_service as admin, community_service as community
+from app.services.admin_views import with_members, report_data, audit_data
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 
@@ -92,7 +93,7 @@ def transactions():
         if not uid.isdecimal():
             fail("INVALID_REQUEST", "user_id는 정수여야 합니다.")
         query = query.filter_by(user_id=int(uid))
-    return success_response(page(query.order_by(LedgerTransaction.ledger_transaction_id.desc()), ledger_data))
+    return success_response(with_members(page(query.order_by(LedgerTransaction.ledger_transaction_id.desc()), ledger_data)))
 
 
 @admin_bp.get("/transactions/<int:transaction_id>")
@@ -104,19 +105,19 @@ def transaction_detail(transaction_id):
 @admin_bp.get("/market-transactions")
 @endpoint(admin=True)
 def market_transactions():
-    return success_response(page(MarketTransaction.query.order_by(MarketTransaction.market_transaction_id.desc())))
+    return success_response(with_members(page(MarketTransaction.query.order_by(MarketTransaction.market_transaction_id.desc()))))
 
 
 @admin_bp.get("/posts")
 @endpoint(admin=True)
 def posts():
-    return success_response(community.list_posts())
+    return success_response(with_members(community.list_posts()))
 
 
 @admin_bp.get("/comments")
 @endpoint(admin=True)
 def comments():
-    return success_response(page(Comment.query.filter_by(deleted_at=None).order_by(Comment.comment_id.desc())))
+    return success_response(with_members(page(Comment.query.filter_by(deleted_at=None).order_by(Comment.comment_id.desc()))))
 
 
 @admin_bp.delete("/posts/<int:post_id>")
@@ -136,7 +137,13 @@ def delete_comment(comment_id):
 @admin_bp.get("/reports")
 @endpoint(admin=True)
 def reports():
-    return success_response(page(Report.query.order_by(Report.report_id.desc())))
+    return success_response(with_members(page(Report.query.order_by(Report.report_id.desc()), report_data), "reporter_user_id"))
+
+
+@admin_bp.get("/reports/<int:report_id>")
+@endpoint(admin=True)
+def report_detail(report_id):
+    return success_response(with_members({"items": [report_data(get_row(Report, report_id))]}, "reporter_user_id")["items"][0])
 
 
 @admin_bp.patch("/reports/<int:report_id>")
@@ -148,13 +155,13 @@ def resolve_report(report_id):
 @admin_bp.get("/inquiries")
 @endpoint(admin=True)
 def inquiries():
-    return success_response(page(Inquiry.query.order_by(Inquiry.inquiry_id.desc()), community.inquiry_data))
+    return success_response(with_members(page(Inquiry.query.order_by(Inquiry.inquiry_id.desc()), community.inquiry_data)))
 
 
 @admin_bp.get("/inquiries/<int:inquiry_id>")
 @endpoint(admin=True)
 def inquiry(inquiry_id):
-    return success_response(community.inquiry_data(get_row(Inquiry, inquiry_id)))
+    return success_response(with_members({"items": [community.inquiry_data(get_row(Inquiry, inquiry_id))]})["items"][0])
 
 
 @admin_bp.patch("/inquiries/<int:inquiry_id>/answer")
@@ -173,4 +180,4 @@ def logs():
             if len(value) > 80:
                 fail("INVALID_REQUEST", "필터 값이 너무 깁니다.")
             query = query.filter(getattr(AuditLog, key) == value)
-    return success_response(page(query.order_by(AuditLog.audit_log_id.desc())))
+    return success_response(with_members(page(query.order_by(AuditLog.audit_log_id.desc()), audit_data), "actor_user_id"))

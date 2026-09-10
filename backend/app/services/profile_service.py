@@ -3,7 +3,7 @@ from app.models.user import User
 from app.models.features import ProfileVisibility, SavingGoal, UserBadge
 from app.schemas.features import VisibilitySchema
 from app.services.feature_common import fail, get_row, serialize
-from app.services.portfolio_service import valuation, badge_data, goal_data
+from app.services.portfolio_service import valuation, badge_data, goal_progress
 from app.services.audit_service import audit
 from app.services.account_service import get_account_by_user_id
 
@@ -75,7 +75,7 @@ def profile(target_id, viewer_id):
                 if own:
                     item["target_amount"] = goal.target_amount
                 if own or flags["show_goal_progress"]:
-                    item["progress_percent"] = round(portfolio["total_assets"] / goal.target_amount * 100, 4)
+                    item["progress_percent"] = goal_progress(goal, portfolio["total_assets"])
                 goals.append(item)
             result[key] = goals
     return result

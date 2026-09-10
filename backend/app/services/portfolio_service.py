@@ -74,23 +74,48 @@ def valuation(user_id):
             "valued_at": datetime.utcnow().isoformat() + "Z"}
 
 
+def goal_progress(goal, total):
+    if goal.status == "COMPLETED":
+        return 100
+    return min(100, max(0, round(total / goal.target_amount * 100, 4)))
+
+
+def initial_funding(user_id):
+    return LedgerTransaction.query.filter_by(
+        user_id=user_id, transaction_type="INITIAL_ASSET",
+    ).order_by(LedgerTransaction.ledger_transaction_id.desc()).first()
+
+
+def needs_target_update(goal, funding):
+    # Legacy goals created before setup must not complete from setup alone.
+    # A later valid edit (target > current assets) makes the goal eligible again.
+    return bool(funding and goal.status == "ACTIVE"
+                and goal.target_amount <= funding.amount
+                and goal.created_at <= funding.created_at
+                and goal.updated_at <= funding.created_at)
+
+
 def goal_data(goal, total=None):
     data = serialize(goal)
     if total is not None:
-        data["progress_percent"] = round(total / goal.target_amount * 100, 4)
+        data["progress_percent"] = goal_progress(goal, total)
+    data["requires_target_update"] = needs_target_update(goal, initial_funding(goal.user_id))
     return data
 
 
 def refresh_achievements(user_id, portfolio):
     # Every caller locks the user's account before evaluating or resetting.
+    setting = SimulationSetting.query.filter_by(user_id=user_id).first()
+    initialized = bool(setting and setting.is_initial_asset_set)
+    funding = initial_funding(user_id)
     for goal in SavingGoal.query.filter_by(user_id=user_id, status="ACTIVE").with_for_update():
-        if portfolio["total_assets"] >= goal.target_amount:
+        if initialized and not needs_target_update(goal, funding) and portfolio["total_assets"] >= goal.target_amount:
             goal.status, goal.completed_at = "COMPLETED", datetime.utcnow()
     db.session.flush()
     completed = SavingGoal.query.filter_by(user_id=user_id, status="COMPLETED").count()
     paid_counts = db.session.query(SavingPayment.saving_id, func.count()).join(Saving).filter(
         Saving.user_id == user_id, SavingPayment.status == "PAID").group_by(SavingPayment.saving_id).all()
-    eligible = {"FIRST_GOAL": completed >= 1, "THREE_GOALS": completed >= 3,
+    eligible = {"FIRST_GOAL": initialized and completed >= 1, "THREE_GOALS": initialized and completed >= 3,
                 "SAVING_SIX_PAYMENTS": any(count >= 6 for _, count in paid_counts),
                 "INVESTMENT_TEN_PERCENT": (portfolio["investment_return_percent"] or 0) >= 10}
     owned = {x.badge_id for x in UserBadge.query.filter_by(user_id=user_id)}
@@ -157,6 +182,9 @@ def dashboard(user_id):
 def save_goal(user_id, payload, goal_id=None):
     from app.services.account_service import get_account_by_user_id
     get_account_by_user_id(user_id)
+    setting = SimulationSetting.query.filter_by(user_id=user_id).first()
+    if not setting or not setting.is_initial_asset_set:
+        fail("INITIAL_ASSET_REQUIRED", "가상 계좌에서 초기 자산을 먼저 설정한 뒤 목표를 만들어 주세요.", 422)
     goal = get_row(SavingGoal, goal_id, owner=user_id, lock=True) if goal_id else SavingGoal(user_id=user_id)
     if goal_id and goal.status != "ACTIVE":
         fail("GOAL_COMPLETED", "완료된 목표는 수정할 수 없습니다.", 409)
@@ -167,8 +195,8 @@ def save_goal(user_id, payload, goal_id=None):
         fail("INVALID_TARGET_DATE", "목표일은 오늘 이후여야 합니다.", 422)
     portfolio = valuation(user_id)
     current = portfolio["total_assets"]
-    if merged["target_amount"] < current:
-        fail("INVALID_TARGET_AMOUNT", "목표 금액은 현재 총자산 이상이어야 합니다.", 422)
+    if merged["target_amount"] <= current:
+        fail("INVALID_TARGET_AMOUNT", "목표 금액은 현재 총자산보다 커야 합니다.", 422)
     for key, value in merged.items():
         setattr(goal, key, value)
     db.session.add(goal)

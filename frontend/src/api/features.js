@@ -92,6 +92,7 @@ export const adminGetCommentsAll = (params = {}) => call('get', '/admin/comments
 export const adminDeletePost = (postId, reason) => call('delete', `/admin/posts/${postId}`, { data: { reason } })
 export const adminDeleteComment = (commentId, reason) => call('delete', `/admin/comments/${commentId}`, { data: { reason } })
 export const adminGetReports = (params = {}) => call('get', '/admin/reports', { params })
+export const adminGetReport = (reportId) => call('get', `/admin/reports/${reportId}`)
 export const adminResolveReport = (reportId, payload) => call('patch', `/admin/reports/${reportId}`, { data: payload })
 export const adminGetInquiries = (params = {}) => call('get', '/admin/inquiries', { params })
 export const adminGetInquiry = (inquiryId) => call('get', `/admin/inquiries/${inquiryId}`)

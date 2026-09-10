@@ -1,4 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import LedgerPicker from '../components/LedgerPicker'
+import { ledgerLabel } from '../utils/presentation'
 import PageShell from '../components/PageShell'
 import Pagination from '../components/Pagination'
 import usePagedList from '../hooks/usePagedList'
@@ -6,7 +9,7 @@ import { showToast } from '../components/Toast'
 import { Empty, Loading, Notice } from '../components/Ui'
 import { shortDate } from '../utils/format'
 import {
-  MOCKS_ENABLED, createInquiry, getApiError, getInquiries, getMyReports,
+  MOCKS_ENABLED, createInquiry, getApiError, getInquiries, getMyReports, getLedgerTransaction,
 } from '../api/features'
 
 const dt = (value) => {
@@ -50,12 +53,35 @@ const INQUIRY_LABEL = { PENDING: '접수됨', ANSWERED: '답변 완료' }
 const REPORT_LABEL = { PENDING: '접수됨', RESOLVED: '조치 완료', REJECTED: '반려' }
 
 function InquiryTab() {
+  const [params, setParams] = useSearchParams()
+  const linkedId = params.get('ledger')
+  const [selectedLedger, setSelectedLedger] = useState(null)
+  const [linkLoading, setLinkLoading] = useState(Boolean(linkedId))
   const { items: list, total, page, totalPages, loading, error, goToPage, reload, retry } = usePagedList(getInquiries, PAGE_SIZE)
   const [selected, setSelected] = useState(null)
-  const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ title: '', content: '', related_ledger_transaction_id: '' })
+  const [showForm, setShowForm] = useState(Boolean(linkedId))
+  const [form, setForm] = useState({ title: '', content: '' })
   const [formError, setFormError] = useState('')
   const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    if (!linkedId) { setLinkLoading(false); return }
+    setSelectedLedger(null)
+    setFormError('')
+    if (!/^[1-9]\d*$/.test(linkedId) || !Number.isSafeInteger(Number(linkedId))) {
+      setFormError('올바른 거래 번호가 아닙니다. 목록에서 거래를 선택해 주세요.')
+      setLinkLoading(false)
+      return
+    }
+    let active = true
+    setLinkLoading(true)
+    setSelectedLedger(null)
+    setShowForm(true)
+    getLedgerTransaction(linkedId)
+      .then((res) => { if (active) setSelectedLedger(res.data) })
+      .catch((err) => { if (active) setFormError(`연결할 거래를 확인할 수 없습니다. ${getApiError(err)}`) })
+      .finally(() => { if (active) setLinkLoading(false) })
+    return () => { active = false }
+  }, [linkedId])
 
   const changePage = (nextPage) => {
     if (busy || loading) return
@@ -65,17 +91,17 @@ function InquiryTab() {
 
   const submit = async (event) => {
     event.preventDefault()
-    if (busy) return
+    if (busy || linkLoading) return
     setBusy(true)
     setFormError('')
     const payload = { title: form.title.trim(), content: form.content.trim() }
-    if (form.related_ledger_transaction_id.trim()) {
-      payload.related_ledger_transaction_id = Number(form.related_ledger_transaction_id)
-    }
+    if (selectedLedger) payload.related_ledger_transaction_id = selectedLedger.ledger_transaction_id
     try {
       await createInquiry(payload)
       setShowForm(false)
-      setForm({ title: '', content: '', related_ledger_transaction_id: '' })
+      setSelectedLedger(null)
+      setParams((current) => { const next = new URLSearchParams(current); next.delete('ledger'); return next }, { replace: true })
+      setForm({ title: '', content: '' })
       showToast('문의를 접수했습니다.')
       setSelected(null)
       reload(1)
@@ -102,29 +128,9 @@ function InquiryTab() {
           <input id="iq_title" type="text" maxLength={100} required value={form.title} onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))} />
           <label className="field-label" htmlFor="iq_content">내용</label>
           <textarea id="iq_content" maxLength={5000} required rows={5} value={form.content} onChange={(e) => setForm((f) => ({ ...f, content: e.target.value }))} />
-          <label className="field-label" htmlFor="iq_ref">
-            관련 금융 원장 거래 번호 (선택)
-          </label>
-
-          <input
-            id="iq_ref"
-            type="number"
-            min="1"
-            value={form.related_ledger_transaction_id}
-            onChange={(e) =>
-              setForm((f) => ({
-                ...f,
-                related_ledger_transaction_id: e.target.value,
-              }))
-            }
-            placeholder="특정 거래 문의인 경우 거래내역의 거래 번호를 입력하세요"
-          />
-
-          <p className="mini-sub">
-            거래와 관련 없는 문의라면 입력하지 않아도 됩니다.
-          </p>
+          <LedgerPicker selected={selectedLedger} onChange={setSelectedLedger} busy={busy || linkLoading} />
           <Notice type="error">{formError}</Notice>
-          <button type="submit" className="service-primary-button" disabled={busy}>문의 접수</button>
+          <button type="submit" className="service-primary-button" disabled={busy || linkLoading}>문의 접수</button>
         </form>
       )}
 
@@ -141,7 +147,7 @@ function InquiryTab() {
               <li key={inquiry.inquiry_id} className="tx-item">
                 <button type="button" className="tx-main" style={{ gridTemplateColumns: '1fr auto 24px' }} onClick={() => setSelected(open ? null : inquiry.inquiry_id)}>
                   <span>
-                    <span className="tx-type">{inquiry.title}</span>
+                    <span className="tx-type text-ellipsis">{inquiry.title}</span>
                     <span className="tx-sub">{dt(inquiry.created_at)}{inquiry.related_ledger_transaction_id ? ` · 거래 #${inquiry.related_ledger_transaction_id}` : ''}</span>
                   </span>
                   <span className={`goal-state ${inquiry.status === 'ANSWERED' ? 'done' : 'active'}`}>{INQUIRY_LABEL[inquiry.status] || inquiry.status}</span>
@@ -149,6 +155,8 @@ function InquiryTab() {
                 </button>
                 {open && (
                   <div className="tx-detail">
+                    <h3 className="full-content">{inquiry.title}</h3>
+                    {inquiry.related_ledger_transaction_id && <p>{inquiry.related_transaction ? ledgerLabel(inquiry.related_transaction) : `거래 #${inquiry.related_ledger_transaction_id} (현재 조회할 수 없는 거래)`}</p>}
                     <p style={{ whiteSpace: 'pre-wrap', margin: '0 0 12px' }}>{inquiry.content}</p>
                     {inquiry.status === 'ANSWERED' ? (
                       <div className="inquiry-answer">
@@ -185,7 +193,7 @@ function ReportTab() {
               <div className="tx-main" style={{ gridTemplateColumns: '1fr auto', cursor: 'default' }}>
                 <span>
                   <span className="tx-type">{report.target_type === 'POST' ? '게시글' : '댓글'} #{report.target_id}</span>
-                  <span className="tx-sub">{report.reason}</span>
+                  <details className="full-content"><summary>신고 사유 보기</summary><p>{report.reason}</p></details>
                   <span className="tx-sub">{shortDate(report.created_at)}{report.resolution_reason ? ` · 처리 사유: ${report.resolution_reason}` : ''}</span>
                 </span>
                 <span className={`goal-state ${report.status === 'RESOLVED' ? 'done' : 'active'}`}>

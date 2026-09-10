@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from flask import has_request_context, request
 from flask_jwt_extended import get_jwt_identity
-from sqlalchemy import event, inspect
+from sqlalchemy import event, inspect, select
 from sqlalchemy.orm import Session
 
 from app.extensions import db
@@ -44,8 +44,37 @@ def _json(value):
     return str(value) if isinstance(value, (Decimal, date, datetime)) else value
 
 
+@event.listens_for(Session, "before_flush")
+def capture_previous_values(session, context, instances):
+    previous = {}
+    for row in list(session.dirty):
+        table = getattr(row, "__tablename__", "")
+        if table not in TRACKED:
+            continue
+        state = inspect(row)
+        changed = [key for key in TRACKED[table] if state.attrs[key].history.has_changes()]
+        if not changed:
+            continue
+        # Assigning an expired/unloaded attribute may not populate history.deleted.
+        # Read its persisted value BEFORE the UPDATE instead of using its new value.
+        missing = [key for key in changed if not state.attrs[key].history.deleted]
+        persisted = {}
+        if missing and state.identity:
+            pk = list(row.__table__.primary_key.columns)[0]
+            persisted = session.connection().execute(
+                select(*(row.__table__.c[key] for key in missing)).where(pk == state.identity[0])
+            ).mappings().one()
+        previous[id(row)] = {
+            key: _json(state.attrs[key].history.deleted[0]
+                       if state.attrs[key].history.deleted else persisted.get(key))
+            for key in changed
+        }
+    session.info["audit_previous_values"] = previous
+
+
 @event.listens_for(Session, "after_flush")
 def record_changes(session, context):
+    previous = session.info.pop("audit_previous_values", {})
     for collection, action in ((session.new, "CREATE"), (session.dirty, "UPDATE"), (session.deleted, "DELETE")):
         for row in list(collection):
             table = getattr(row, "__tablename__", "")
@@ -55,7 +84,8 @@ def record_changes(session, context):
             changed = [key for key in TRACKED[table] if action != "UPDATE" or state.attrs[key].history.has_changes()]
             if not changed:
                 continue
-            before = {key: _json(state.attrs[key].history.deleted[0] if state.attrs[key].history.deleted else getattr(row, key)) for key in changed}
+            before = (previous.get(id(row), {}) if action == "UPDATE"
+                      else {key: _json(getattr(row, key)) for key in changed})
             after = {key: _json(getattr(row, key)) for key in changed}
             identifier = getattr(row, list(row.__table__.primary_key.columns)[0].name)
             audit(action, table, identifier, None if action == "CREATE" else before,

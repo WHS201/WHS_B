@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import PostImageEditor from '../components/PostImageEditor'
+import { savePostWithImages, validatePostImages } from '../utils/postImages'
 import PageShell from '../components/PageShell'
 import Pagination from '../components/Pagination'
 import usePagedList from '../hooks/usePagedList'
@@ -70,7 +72,7 @@ const authorName = (item, myId, nameMap = {}) => (
 function Author({ item, myId, nameMap }) {
   const name = authorName(item, myId, nameMap)
   if (item.user_id === myId || item.user_id == null) return name
-  return <Link to={`/profile/${item.user_id}`} className="author-link">{name}</Link>
+  return <Link to={`/profile/${item.user_id}`} className="author-link" onClick={(event) => event.stopPropagation()}>{name}</Link>
 }
 
 function ReportForm({ target, reason, error, busy, onChange, onSubmit, onCancel }) {
@@ -112,6 +114,7 @@ function PostDetail({ postId, myId, onClose }) {
 
   const [editing, setEditing] = useState(false)
   const [editForm, setEditForm] = useState(emptyPost)
+  const [editImages, setEditImages] = useState([])
   const [commentText, setCommentText] = useState('')
   const [editingCommentId, setEditingCommentId] = useState(null)
   const [editCommentText, setEditCommentText] = useState('')
@@ -192,6 +195,7 @@ function PostDetail({ postId, myId, onClose }) {
 
   const startEdit = () => {
     setEditForm({ board_type: post.board_type, title: post.title, content: post.content })
+    setEditImages([])
     setEditing(true)
   }
 
@@ -200,23 +204,28 @@ function PostDetail({ postId, myId, onClose }) {
     setBusy(true)
     setError('')
     try {
-      await updatePost(postId, {
+      const problem = validatePostImages(editImages, post.attachments?.length || 0)
+      if (problem) throw new Error(problem)
+      await savePostWithImages({ postId, files: editImages, payload: {
         board_type: editForm.board_type,
         title: editForm.title.trim(),
         content: editForm.content.trim(),
-      })
+      } }, { updatePost, uploadPostImages })
+      setEditImages([])
       setEditing(false)
       await refreshPost()
       showToast('게시글을 수정했습니다.')
     } catch (saveError) {
-      setError(getApiError(saveError))
+      setError(`${saveError.postSaved ? '글은 저장되었지만 이미지 첨부에 실패했습니다. 이미지를 확인하고 다시 저장해 주세요. ' : ''}${getApiError(saveError)}`)
     } finally {
       setBusy(false)
     }
   }
 
   const uploadImages = async (files) => {
-    if (!files || files.length === 0) return
+    if (busy || !files || files.length === 0) return
+    const problem = validatePostImages(Array.from(files), post.attachments?.length || 0)
+    if (problem) { setError(problem); return }
     setBusy(true)
     setError('')
     try {
@@ -231,12 +240,15 @@ function PostDetail({ postId, myId, onClose }) {
   }
 
   const removeAttachment = async (attachmentId) => {
-    if (!await confirmAction('첨부 이미지를 삭제할까요?')) return
+    if (busy || !await confirmAction('첨부 이미지를 삭제할까요? 삭제는 즉시 반영됩니다.')) return
+    setBusy(true)
     try {
       await deleteAttachment(attachmentId)
       await refreshPost()
     } catch (removeError) {
       setError(getApiError(removeError))
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -349,7 +361,7 @@ function PostDetail({ postId, myId, onClose }) {
 
       <Notice type="error">{error}</Notice>
 
-      {loading || !post ? <Loading /> : editing ? (
+      {loading ? <Loading /> : !post ? <Empty>게시글을 불러올 수 없습니다. 삭제된 글인지 확인해 주세요.</Empty> : editing ? (
         <form className="post-form service-card" onSubmit={saveEdit}>
           <span className="card-label">게시글 수정</span>
           <label className="field-label" htmlFor="edit_board">게시판</label>
@@ -360,6 +372,7 @@ function PostDetail({ postId, myId, onClose }) {
           <input id="edit_title" type="text" maxLength={100} required value={editForm.title} onChange={(e) => setEditForm((f) => ({ ...f, title: e.target.value }))} />
           <label className="field-label" htmlFor="edit_content">내용</label>
           <textarea id="edit_content" maxLength={10000} required value={editForm.content} onChange={(e) => setEditForm((f) => ({ ...f, content: e.target.value }))} />
+          <PostImageEditor files={editImages} onChange={setEditImages} existing={post.attachments || []} onRemove={removeAttachment} busy={busy} />
           <div className="button-row goal-form-buttons">
             <button type="submit" className="service-primary-button" disabled={busy}>수정 저장</button>
             <button type="button" className="service-secondary-button" onClick={() => setEditing(false)} disabled={busy}>취소</button>
@@ -402,7 +415,8 @@ function PostDetail({ postId, myId, onClose }) {
                 type="file"
                 accept="image/png,image/jpeg,image/webp"
                 multiple
-                onChange={(event) => uploadImages(event.target.files)}
+                disabled={busy}
+                onChange={(event) => { uploadImages(event.target.files); event.target.value = "" }}
               />
             </label>
           )}
@@ -546,11 +560,28 @@ function PostDetail({ postId, myId, onClose }) {
 
 function CommunityPage() {
   const [myId, setMyId] = useState(null)
-  const [board, setBoard] = useState('')
-  const [sort, setSort] = useState('latest')
-  const [queryInput, setQueryInput] = useState('')
-  const [search, setSearch] = useState('')
-  const [page, setPage] = useState(1)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { postId: routePostId } = useParams()
+  const [params, setParams] = useSearchParams()
+  const selectedId = routePostId === undefined ? null : Number(routePostId)
+  const board = params.get('board') || ''
+  const sort = params.get('sort') || 'latest'
+  const search = params.get('q') || ''
+  const page = Math.max(1, Math.min(10000, Number(params.get('page')) || 1))
+  const [queryInput, setQueryInput] = useState(search)
+  useEffect(() => setQueryInput(search), [search])
+  const filters = (patch) => setParams((current) => {
+    const next = new URLSearchParams(current)
+    Object.entries(patch).forEach(([key, value]) => value ? next.set(key, String(value)) : next.delete(key))
+    return next
+  })
+  const setBoard = (value) => filters({ board: value, page: 1 })
+  const setSort = (value) => filters({ sort: value, page: 1 })
+  const setSearch = (value) => filters({ q: value, page: 1 })
+  const setPage = (value) => filters({ page: typeof value === 'function' ? value(page) : value })
+  const openPost = (id) => navigate(`/community/posts/${id}${location.search}`)
+  const closePost = () => navigate(`/community${location.search}`)
   const [reloadKey, setReloadKey] = useState(0)
 
   const [list, setList] = useState(null)
@@ -558,10 +589,20 @@ function CommunityPage() {
   const [listError, setListError] = useState('')
   const [nameMap, setNameMap] = useState({})
 
-  const [selectedId, setSelectedId] = useState(null)
 
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(emptyPost)
+  const [images, setImages] = useState([])
+  const [createdPostId, setCreatedPostId] = useState(null)
+  useEffect(() => {
+    // Opening the saved post ends a partially completed creation flow.
+    if (selectedId !== null && selectedId === createdPostId) {
+      setCreatedPostId(null)
+      setImages([])
+      setForm(emptyPost)
+      setShowForm(false)
+    }
+  }, [selectedId, createdPostId])
   const [formError, setFormError] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -601,7 +642,6 @@ function CommunityPage() {
   const submitSearch = (event) => {
     event.preventDefault()
     setSearch(queryInput.trim())
-    setPage(1)
   }
 
   const submitPost = async (event) => {
@@ -609,20 +649,22 @@ function CommunityPage() {
     setBusy(true)
     setFormError('')
     try {
-      await createPost({
+      const problem = validatePostImages(images)
+      if (problem) throw new Error(problem)
+      const savedId = await savePostWithImages({ postId: createdPostId, files: images, onSaved: setCreatedPostId, payload: {
         board_type: form.board_type,
         title: form.title.trim(),
         content: form.content.trim(),
-      })
+      } }, { createPost, updatePost, uploadPostImages })
+      setImages([])
+      setCreatedPostId(null)
       setShowForm(false)
       setForm(emptyPost)
-      setBoard('')
-      setSort('latest')
-      setPage(1)
+      openPost(savedId)
       setReloadKey((value) => value + 1)
       showToast('게시글을 등록했습니다.')
     } catch (postError) {
-      setFormError(getApiError(postError))
+      setFormError(`${postError.postSaved ? '글은 저장되었지만 이미지 첨부에 실패했습니다. 다시 등록하면 같은 글에 첨부를 재시도합니다. ' : ''}${getApiError(postError)}`)
     } finally {
       setBusy(false)
     }
@@ -637,7 +679,7 @@ function CommunityPage() {
       title="게시판"
       description="자유 · 국내주식 · 미국주식 · 예·적금 게시판에서 다른 사용자와 정보를 나눠보세요."
       actions={selectedId === null && (
-        <button type="button" className="service-primary-button" onClick={() => { setShowForm((v) => !v); setFormError('') }}>
+        <button type="button" className="service-primary-button" disabled={busy} onClick={() => { if (createdPostId) { openPost(createdPostId); return } setShowForm((v) => !v); setFormError('') }}>
           {showForm ? '작성 닫기' : '글쓰기'}
         </button>
       )}
@@ -649,7 +691,9 @@ function CommunityPage() {
       )}
 
       {selectedId !== null ? (
-        <PostDetail key={selectedId} postId={selectedId} myId={myId} onClose={() => setSelectedId(null)} />
+        Number.isSafeInteger(selectedId) && selectedId > 0
+          ? <PostDetail key={selectedId} postId={selectedId} myId={myId} onClose={closePost} />
+          : <Notice type="error">올바르지 않은 게시글 주소입니다. <Link to="/community">목록으로</Link></Notice>
       ) : (
         <>
           {showForm && (
@@ -663,24 +707,26 @@ function CommunityPage() {
               <input id="new_title" type="text" maxLength={100} required value={form.title} onChange={(event) => setForm((f) => ({ ...f, title: event.target.value }))} />
               <label className="field-label" htmlFor="new_content">내용</label>
               <textarea id="new_content" maxLength={10000} required value={form.content} onChange={(event) => setForm((f) => ({ ...f, content: event.target.value }))} />
+              <PostImageEditor files={images} onChange={setImages} busy={busy} />
+              {createdPostId && <p className="mini-sub">게시글은 저장되었습니다. <Link to={`/community/posts/${createdPostId}`}>저장된 글 확인</Link></p>}
               <Notice type="error">{formError}</Notice>
               <div className="button-row goal-form-buttons">
                 <button type="submit" className="service-primary-button" disabled={busy}>등록</button>
-                <button type="button" className="service-secondary-button" onClick={() => setShowForm(false)} disabled={busy}>취소</button>
+                <button type="button" className="service-secondary-button" onClick={() => { if (createdPostId) openPost(createdPostId); else setShowForm(false) }} disabled={busy}>취소</button>
               </div>
             </form>
           )}
 
           <div className="tab-bar">
             {BOARDS.map(([value, label]) => (
-              <button key={value || 'all'} className={board === value ? 'active' : ''} onClick={() => { setBoard(value); setPage(1) }}>
+              <button key={value || 'all'} className={board === value ? 'active' : ''} onClick={() => setBoard(value)}>
                 {label}
               </button>
             ))}
           </div>
 
           <div className="community-toolbar">
-            <select value={sort} onChange={(event) => { setSort(event.target.value); setPage(1) }}>
+            <select value={sort} onChange={(event) => setSort(event.target.value)}>
               {SORTS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
             {list && <span className="tx-count">전체 {list.total}건</span>}
@@ -697,7 +743,7 @@ function CommunityPage() {
               <ul className="post-list">
                 {items.map((post) => (
                   <li key={post.post_id} className="post-item">
-                    <button type="button" className="post-card" onClick={() => setSelectedId(post.post_id)}>
+                    <button type="button" className="post-card" onClick={() => openPost(post.post_id)}>
                       <h3>{post.title}</h3>
                       <div className="post-card-meta">
                         <span className="board-chip">{BOARD_LABEL[post.board_type] || post.board_type}</span>

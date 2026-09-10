@@ -1,3 +1,4 @@
+import { goalPercent } from '../utils/presentation'
 import { useEffect, useState } from 'react'
 import PageShell from '../components/PageShell'
 import { Empty, Loading, Notice } from '../components/Ui'
@@ -168,7 +169,7 @@ function ResultView({ result }) {
             <span>목표금액과의 차이</span>
             <strong className={profitClass(result.difference)}>{signed(result.difference)}</strong>
           </div>
-          <div className="metric-card"><span>예상 목표 달성률</span><strong>{rate(result.progress_percent)}</strong></div>
+          <div className="metric-card"><span>예상 목표 달성률</span><strong>{rate(goalPercent(result))}</strong></div>
           <div className="metric-card"><span>누락된 예상 납입</span><strong>{result.missed_payments}회</strong></div>
         </div>
       )}

@@ -162,7 +162,7 @@ let inquiries = [
   { inquiry_id: 1, user_id: MY_USER_ID, related_ledger_transaction_id: 10, title: '주식 매수 수수료가 이상합니다', content: '체결 금액 대비 수수료가 예상보다 큰 것 같아요. 확인 부탁드립니다.', status: 'ANSWERED', admin_answer: '국내 주식 수수료 0.015%가 정상 적용된 건으로 확인됩니다. 추가 문의 주세요.', answered_at: '2026-09-06T02:00:00Z', answered_by: 99, created_at: '2026-09-05T15:00:00Z', updated_at: '2026-09-06T02:00:00Z' },
 ]
 let nextInquiryId = 2
-const inquiryData = (row) => ({ ...row, attachments: [] })
+const inquiryData = (row) => ({ ...row, attachments: [], related_transaction: LEDGER.find((entry) => entry.ledger_transaction_id === row.related_ledger_transaction_id && entry.user_id === row.user_id) || null })
 
 // --- 관리자 표본 데이터 ---
 const ADMIN_USERS = [
@@ -409,12 +409,12 @@ const pickGoalFields = (data = {}) => {
 }
 
 // 서버 save_goal() 의 비즈니스 규칙을 흉내 내 UI 의 에러 처리 경로를 확인할 수 있게 한다.
-// ADDITIONAL_BACKEND.md: 목표 금액은 "현재 총자산 이상"이면 허용하고, 같으면 즉시 완료 처리된다.
+// 목표 금액은 현재 총자산보다 커야 한다.
 function validateGoal(goal) {
   if (!goal.goal_name || !goal.goal_name.trim()) return reject('INVALID_REQUEST', '목표명을 입력해 주세요.')
   if (!(goal.target_amount > 0 && goal.target_amount <= 1000000000)) return reject('INVALID_REQUEST', '목표 금액은 1원 이상 10억 원 이하여야 합니다.')
   if (!goal.target_date || goal.target_date <= TODAY) return reject('INVALID_TARGET_DATE', '목표일은 오늘 이후여야 합니다.', 422)
-  if (goal.target_amount < TOTAL_ASSETS) return reject('INVALID_TARGET_AMOUNT', '목표 금액은 현재 총자산 이상이어야 합니다.', 422)
+  if (goal.target_amount <= TOTAL_ASSETS) return reject('INVALID_TARGET_AMOUNT', '목표 금액은 현재 총자산보다 커야 합니다.', 422)
   return null
 }
 
@@ -767,6 +767,13 @@ async function mockRequest(method, url, { params = {}, data } = {}) {
   }
   if (path === '/admin/reports' && verb === 'GET') return ok(paginate(reports.slice().reverse(), params))
   const adminReportMatch = path.match(/^\/admin\/reports\/(\d+)$/)
+  if (adminReportMatch && verb === 'GET') {
+    const row = reports.find((r) => r.report_id === Number(adminReportMatch[1]))
+    if (!row) return reject('NOT_FOUND', '신고를 찾을 수 없습니다.', 404)
+    const target = (row.target_type === 'POST' ? posts : comments).find((item) => (row.target_type === 'POST' ? item.post_id : item.comment_id) === row.target_id)
+    const parent = row.target_type === 'POST' ? target : posts.find((item) => item.post_id === target?.post_id)
+    return ok({ ...row, target: { deleted: !target || !parent, post_id: parent?.post_id, title: parent?.title, content: target?.content } })
+  }
   if (adminReportMatch && verb === 'PATCH') {
     const row = reports.find((r) => r.report_id === Number(adminReportMatch[1]))
     if (!row) return reject('NOT_FOUND', '신고를 찾을 수 없습니다.', 404)

@@ -1,3 +1,5 @@
+import { Link } from 'react-router-dom'
+import { LEDGER_TYPE_LABELS, ledgerNet } from '../utils/presentation'
 import { useEffect, useState } from 'react'
 import PageShell from '../components/PageShell'
 import { Empty, Loading, Notice } from '../components/Ui'
@@ -6,20 +8,6 @@ import { MOCKS_ENABLED, getApiError, getInvestmentTransactions, getLedgerTransac
 
 const PAGE_SIZE = 10
 
-// backend app/constants.py TransactionType
-const LEDGER_TYPE_LABELS = {
-  INITIAL_ASSET: '초기 자산',
-  MONTHLY_INCOME: '월 정기 수입',
-  MONTHLY_EXPENSE: '월 예상 지출',
-  STOCK_BUY: '주식·ETF 매수',
-  STOCK_SELL: '주식·ETF 매도',
-  DEPOSIT_JOIN: '예금 가입',
-  DEPOSIT_CANCEL: '예금 중도해지',
-  DEPOSIT_MATURITY: '예금 만기',
-  SAVING_PAYMENT: '적금 납입',
-  SAVING_CANCEL: '적금 중도해지',
-  SAVING_MATURITY: '적금 만기',
-}
 const TYPE_OPTIONS = [['', '전체'], ...Object.entries(LEDGER_TYPE_LABELS)]
 
 const dateTime = (value) => {
@@ -59,10 +47,7 @@ const dateTime = (value) => {
 
 const signed = (value) => `${Number(value) >= 0 ? '+' : ''}${won(value)}`
 const netClass = (value) => (Number(value) >= 0 ? 'profit-up' : 'profit-down')
-const ledgerNet = (row) => (row.entries || []).reduce(
-  (sum, entry) => sum + (entry.entry_type === 'CREDIT' ? Number(entry.amount) : -Number(entry.amount)),
-  0,
-)
+
 
 function TransactionsPage() {
   const [tab, setTab] = useState('LEDGER') // LEDGER | MARKET
@@ -163,7 +148,7 @@ function TransactionsPage() {
                     >
                       <span>
                         <span className="tx-type">{LEDGER_TYPE_LABELS[row.transaction_type] || row.transaction_type}</span>
-                        <span className="tx-sub">{dateTime(row.created_at)}</span>
+                        <span className="tx-sub">거래 #{row.ledger_transaction_id} · {dateTime(row.created_at)}</span>
                       </span>
                       <span className={`tx-amount ${netClass(net)}`}>{signed(net)}</span>
                       <span className="tx-balance">잔액 {won(row.balance_after)}</span>
@@ -172,6 +157,7 @@ function TransactionsPage() {
 
                     {open && (
                       <div className="tx-detail">
+                        <p><strong>금융 원장 거래 #{row.ledger_transaction_id}</strong> · <Link to={`/support?ledger=${row.ledger_transaction_id}`}>이 거래 문의하기</Link></p>
                         <div>원본 참조: {row.reference_type} #{row.reference_id}</div>
                         <table>
                           <tbody>

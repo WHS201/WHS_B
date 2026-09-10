@@ -1,3 +1,4 @@
+import { goalPercent } from '../utils/presentation'
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import PageShell from '../components/PageShell'
@@ -89,8 +90,8 @@ function DashboardPage() {
           <div className="dash-section">
             <h2>목표 달성률</h2>
             {(data.goals || []).length === 0 ? <Empty>등록된 저축 목표가 없습니다.</Empty> : data.goals.map((goal) => {
-              const percent = Number(goal.progress_percent || 0)
-              const done = goal.status === 'COMPLETED' || percent >= 100
+              const percent = goalPercent(goal)
+              const done = goal.status === 'COMPLETED'
               return (
                 <div key={goal.goal_id} className="goal-row">
                   <div className="goal-row-head">

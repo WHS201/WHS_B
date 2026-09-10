@@ -1,3 +1,4 @@
+import { goalPercent } from '../utils/presentation'
 import { useEffect, useState } from 'react'
 import PageShell from '../components/PageShell'
 import { confirmAction, showToast } from '../components/Toast'
@@ -132,8 +133,8 @@ function GoalsPage() {
           {goals.length === 0 ? <Empty>아직 만든 저축 목표가 없습니다.</Empty> : (
             <div className="goal-list">
               {goals.map((goal) => {
-                const percent = Number(goal.progress_percent || 0)
-                const done = goal.status === 'COMPLETED' || percent >= 100
+                const percent = goalPercent(goal)
+                const done = goal.status === 'COMPLETED'
                 return (
                   <div key={goal.goal_id} className={`goal-card${done ? ' is-done' : ''}`}>
                     <div className="goal-card-top">
@@ -157,6 +158,7 @@ function GoalsPage() {
                       {goal.completed_at && <span>달성일 {shortDate(goal.completed_at)}</span>}
                     </div>
 
+                    <Notice type="info">{goal.requires_target_update ? "초기 자산 설정 전에 만든 목표입니다. 현재 총자산보다 큰 금액으로 수정해 주세요." : ""}</Notice>
                     <div className="goal-card-actions">
                       {!done && (
                         <button type="button" className="goal-edit-button" onClick={() => startEdit(goal)}>수정</button>
@@ -172,7 +174,7 @@ function GoalsPage() {
           <section className="service-card">
             <span className="card-label">{editingId === null ? '새 목표' : '목표 수정'}</span>
             <h2>{editingId === null ? '저축 목표 만들기' : '저축 목표 수정'}</h2>
-            <p>목표 금액은 1원 초과 10억 원 이하이며, 현재 총자산보다 커야 합니다. 목표일은 오늘 이후여야 합니다.</p>
+            <p>초기 자산을 설정한 뒤 목표를 만들 수 있습니다. 목표 금액은 1원 이상 10억 원 이하이며, 현재 총자산보다 커야 합니다. 목표일은 오늘 이후여야 합니다.</p>
 
             {atLimit ? (
               <Notice type="info">

@@ -113,8 +113,16 @@ def attachment_list(**parent):
 
 
 def inquiry_data(row):
+    # A logical reference may be missing after cleanup; never expose a reused
+    # identifier belonging to another user.
+    ledger = LedgerTransaction.query.filter_by(
+        ledger_transaction_id=row.related_ledger_transaction_id, user_id=row.user_id,
+    ).first() if row.related_ledger_transaction_id else None
     return {
         **serialize(row),
+        "related_transaction": ({
+            **serialize(ledger), "entries": [serialize(entry) for entry in ledger.entries],
+        } if ledger else None),
         "attachments": attachment_list(
             inquiry_id=row.inquiry_id,
         ),

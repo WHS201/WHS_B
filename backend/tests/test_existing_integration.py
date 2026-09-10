@@ -88,13 +88,13 @@ def test_admin_option_rejects_unrepresentable_mysql_rate(client, auth):
     assert option.base_interest_rate == Decimal("3")
 
 
-def test_equal_asset_goal_completes_on_creation(client, auth):
+def test_equal_asset_goal_is_rejected_before_badge_award(client, auth):
     response = client.post("/api/goals", headers=auth(), json={
         "goal_name": "현재 목표", "target_amount": 1000, "target_date": "2027-01-01",
     })
-    assert response.status_code == 201, response.json
-    assert response.json["data"]["status"] == "COMPLETED"
-    assert response.json["data"]["completed_at"] is not None
+    assert response.status_code == 422, response.json
+    assert response.json["error"]["code"] == "INVALID_TARGET_AMOUNT"
+    assert client.get("/api/badges/me", headers=auth()).json["data"] == []
 
 
 def test_krw_only_goal_projection_does_not_fetch_fx(client, auth, make_goal, monkeypatch):

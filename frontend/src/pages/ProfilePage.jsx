@@ -1,3 +1,4 @@
+import { goalPercent } from '../utils/presentation'
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import PageShell from '../components/PageShell'
@@ -27,7 +28,7 @@ function GoalMiniList({ goals }) {
       {goals.map((goal) => (
         <li key={goal.goal_id}>
           <span>{goal.goal_name}<br /><span className="mini-sub">목표일 {shortDate(goal.target_date)}</span></span>
-          {goal.progress_percent != null && <span className="trade-right">{Number(goal.progress_percent).toFixed(1)}%</span>}
+          {goal.progress_percent != null && <span className="trade-right">{goalPercent(goal).toFixed(1)}%</span>}
         </li>
       ))}
     </ul>
