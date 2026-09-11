@@ -56,6 +56,8 @@ const FIELD_LABELS = {
   target_date: '목표일', principal: '원금', payout_amount: '지급 금액', total_paid_principal: '납입 원금',
   side: '매매 구분', quantity: '수량', amount_krw: '원화 금액', transaction_type: '거래 종류',
   badge_id: '뱃지 번호', representative_badge_id: '대표 뱃지 번호', sync_locked: '자동 갱신 제외',
+  badge_policy_version: '목표 뱃지 정책 버전', badge_initial_assets: '목표 생성 당시 총자산',
+  badge_started_on: '목표 뱃지 기간 기준일',
 }
 export const auditValue = (value) => {
   if (value == null) return '기록 없음'

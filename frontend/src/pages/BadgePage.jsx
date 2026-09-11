@@ -4,6 +4,7 @@ import PageShell from '../components/PageShell'
 import { Empty, Loading, Notice } from '../components/Ui'
 import { shortDate } from '../utils/format'
 import { MOCKS_ENABLED, getApiError, getBadgeCatalog, getMyBadges } from '../api/features'
+import { GOAL_BADGE_WAIT_NOTICE } from '../utils/goalBadgePolicy'
 
 const BADGE_ICON = { GOAL: '🎯', SAVING: '🐖', INVESTMENT: '📈' }
 const TYPE_LABEL = { GOAL: '목표', SAVING: '적금', INVESTMENT: '투자' }
@@ -51,6 +52,11 @@ function BadgePage() {
       )}
 
       <Notice type="error">{error}</Notice>
+      <Notice type="info">
+        생성 당시 총자산이 0원보다 크고, 그 자산의 105% 이상인 목표금액과 7일 이상의 목표기간을 모두 만족해야 합니다.
+        {GOAL_BADGE_WAIT_NOTICE}
+        인정되는 목표가 1개·3개일 때 각각 지급됩니다. 생성 당시 자산이 0원이거나 기록이 없는 목표는 제외되며, 이미 획득한 뱃지는 유지됩니다.
+      </Notice>
 
       {loading ? <Loading /> : catalog.length === 0 ? <Empty>등록된 뱃지가 없습니다.</Empty> : (
         <>

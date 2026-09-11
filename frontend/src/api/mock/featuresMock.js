@@ -4,7 +4,9 @@
 // src/api/features.js 가 자동으로 실제 /api 호출로 전환된다.
 // 응답 형태는 backend.zip 의 서비스 코드(portfolio_service.py 등) 기준으로 맞춰 둠.
 
-export const MOCKS_ENABLED = import.meta.env.VITE_USE_MOCKS === 'true'
+import { addCalendarDays, completedAfterBadgeWait, formBadgeCriteria, koreanToday } from '../../utils/goalBadgePolicy.js'
+
+export const MOCKS_ENABLED = import.meta.env?.VITE_USE_MOCKS === 'true'
 
 const delay = (ms = 200) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -22,11 +24,22 @@ let goals = [
 ]
 let nextGoalId = 3
 
-// 서버 goal_data(): progress_percent = round(total_assets / target_amount * 100, 4)
-const goalData = (goal) => ({
-  ...goal,
-  progress_percent: Math.round((TOTAL_ASSETS / goal.target_amount) * 1000000) / 10000,
-})
+const goalData = (goal) => {
+  const criteria = goal.badge_criteria || {
+    baseline_known: false, assets_at_creation: null, created_on: null,
+    minimum_target_amount: null, minimum_period_days: 7,
+  }
+  return {
+    ...goal,
+    progress_percent: goal.status === 'COMPLETED' ? 100 : Math.min(100, Math.round((TOTAL_ASSETS / goal.target_amount) * 1000000) / 10000),
+    badge_criteria: {
+      ...criteria,
+      eligible: criteria.baseline_known && criteria.assets_at_creation > 0 && goal.target_amount >= criteria.minimum_target_amount
+        && goal.target_date >= addCalendarDays(criteria.created_on, criteria.minimum_period_days)
+        && (goal.status !== 'COMPLETED' || completedAfterBadgeWait(goal)),
+    },
+  }
+}
 
 const BADGE_CATALOG = [
   { badge_id: 1, code: 'FIRST_GOAL', name: '첫 목표 달성', description: '저축 목표를 처음으로 달성했습니다.', badge_type: 'GOAL' },
@@ -413,7 +426,7 @@ const pickGoalFields = (data = {}) => {
 function validateGoal(goal) {
   if (!goal.goal_name || !goal.goal_name.trim()) return reject('INVALID_REQUEST', '목표명을 입력해 주세요.')
   if (!(goal.target_amount > 0 && goal.target_amount <= 1000000000)) return reject('INVALID_REQUEST', '목표 금액은 1원 이상 10억 원 이하여야 합니다.')
-  if (!goal.target_date || goal.target_date <= TODAY) return reject('INVALID_TARGET_DATE', '목표일은 오늘 이후여야 합니다.', 422)
+  if (!goal.target_date || goal.target_date <= koreanToday()) return reject('INVALID_TARGET_DATE', '목표일은 오늘 이후여야 합니다.', 422)
   if (goal.target_amount <= TOTAL_ASSETS) return reject('INVALID_TARGET_AMOUNT', '목표 금액은 현재 총자산보다 커야 합니다.', 422)
   return null
 }
@@ -494,6 +507,7 @@ async function mockRequest(method, url, { params = {}, data } = {}) {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
       ...pickGoalFields(data),
+      badge_criteria: formBadgeCriteria(TOTAL_ASSETS),
     }
     const problem = validateGoal(goal)
     if (problem) return problem

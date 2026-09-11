@@ -1,18 +1,19 @@
 """Feature tests use isolated SQLite data and deterministic market information."""
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import sys
 from pathlib import Path
 
 import pytest
 from flask_jwt_extended import create_access_token
+from sqlalchemy import event
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import create_app
 from app.extensions import db
 from app.models.account import Account
-from app.models.features import Badge
+from app.models.features import Badge, SavingGoal
 from app.models.simulation_setting import SimulationSetting
 from app.models.user import User
 from app.services import market_data_service, portfolio_service, projection_service
@@ -69,6 +70,39 @@ def app(monkeypatch):
 @pytest.fixture
 def client(app):
     return app.test_client()
+
+
+@pytest.fixture
+def goal_clock(app, monkeypatch):
+    """Opt-in clock for goal creation and completion; no production time changes."""
+    class Clock(datetime):
+        current = datetime(2026, 1, 1, 3)  # Noon in Korea.
+
+        @classmethod
+        def utcnow(cls):
+            return cls.current
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls.current.replace(tzinfo=timezone.utc).astimezone(tz) if tz else cls.current
+
+        @classmethod
+        def advance(cls, **delta):
+            cls.current += timedelta(**delta)
+
+    def stamp_goal(mapper, connection, goal):
+        if goal.created_at is None:
+            goal.created_at = Clock.utcnow()
+        if goal.updated_at is None:
+            goal.updated_at = Clock.utcnow()
+
+    monkeypatch.setattr(portfolio_service, "datetime", Clock)
+    monkeypatch.setattr(portfolio_service, "today", lambda: Clock.now(timezone(timedelta(hours=9))).date())
+    event.listen(SavingGoal, "before_insert", stamp_goal)
+    try:
+        yield Clock
+    finally:
+        event.remove(SavingGoal, "before_insert", stamp_goal)
 
 
 @pytest.fixture

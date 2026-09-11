@@ -14,6 +14,7 @@ from app.models.features import SavingGoal, AssetSnapshot, Badge, UserBadge
 from app.services import market_data_service
 from app.services.feature_common import fail, get_row, serialize
 from app.services.investment_calculations import to_krw
+from app.services.goal_badge_policy import badge_criteria, record_creation_baseline
 
 
 def today():
@@ -100,6 +101,7 @@ def goal_data(goal, total=None):
     if total is not None:
         data["progress_percent"] = goal_progress(goal, total)
     data["requires_target_update"] = needs_target_update(goal, initial_funding(goal.user_id))
+    data["badge_criteria"] = badge_criteria(goal)
     return data
 
 
@@ -112,7 +114,10 @@ def refresh_achievements(user_id, portfolio):
         if initialized and not needs_target_update(goal, funding) and portfolio["total_assets"] >= goal.target_amount:
             goal.status, goal.completed_at = "COMPLETED", datetime.utcnow()
     db.session.flush()
-    completed = SavingGoal.query.filter_by(user_id=user_id, status="COMPLETED").count()
+    completed = sum(
+        badge_criteria(goal)["eligible"]
+        for goal in SavingGoal.query.filter_by(user_id=user_id, status="COMPLETED")
+    )
     paid_counts = db.session.query(SavingPayment.saving_id, func.count()).join(Saving).filter(
         Saving.user_id == user_id, SavingPayment.status == "PAID").group_by(SavingPayment.saving_id).all()
     eligible = {"FIRST_GOAL": initialized and completed >= 1, "THREE_GOALS": initialized and completed >= 3,
@@ -191,7 +196,8 @@ def save_goal(user_id, payload, goal_id=None):
     if not goal_id and SavingGoal.query.filter_by(user_id=user_id).count() >= 5:
         fail("GOAL_LIMIT", "저축 목표는 최대 5개입니다.", 422)
     merged = {key: payload.get(key, getattr(goal, key, None)) for key in ("goal_name", "target_amount", "target_date")}
-    if merged["target_date"] <= today():
+    created_on = today()
+    if merged["target_date"] <= created_on:
         fail("INVALID_TARGET_DATE", "목표일은 오늘 이후여야 합니다.", 422)
     portfolio = valuation(user_id)
     current = portfolio["total_assets"]
@@ -201,6 +207,8 @@ def save_goal(user_id, payload, goal_id=None):
         setattr(goal, key, value)
     db.session.add(goal)
     db.session.flush()
+    if not goal_id:
+        record_creation_baseline(goal, current, created_on)
     refresh_achievements(user_id, portfolio)
     db.session.commit()
     return goal_data(goal, current)

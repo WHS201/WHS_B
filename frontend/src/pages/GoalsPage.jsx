@@ -4,19 +4,15 @@ import PageShell from '../components/PageShell'
 import { confirmAction, showToast } from '../components/Toast'
 import { Empty, Loading, Notice } from '../components/Ui'
 import { shortDate, won } from '../utils/format'
-import { MOCKS_ENABLED, createGoal, deleteGoal, getApiError, getGoals, updateGoal } from '../api/features'
+import { MOCKS_ENABLED, createGoal, deleteGoal, getApiError, getDashboard, updateGoal } from '../api/features'
+import { addCalendarDays, formBadgeCriteria, goalBadgeMessage, GOAL_BADGE_WAIT_NOTICE, koreanToday } from '../utils/goalBadgePolicy'
 
 const MAX_GOALS = 5
 const emptyForm = { goal_name: '', target_amount: '', target_date: '' }
 
-const tomorrow = () => {
-  const date = new Date()
-  date.setDate(date.getDate() + 1)
-  return date.toISOString().slice(0, 10)
-}
-
 function GoalsPage() {
   const [goals, setGoals] = useState([])
+  const [currentAssets, setCurrentAssets] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [formError, setFormError] = useState('')
@@ -26,8 +22,10 @@ function GoalsPage() {
 
   const load = async () => {
     try {
-      const result = await getGoals()
-      setGoals(result.data)
+      const result = await getDashboard()
+      setGoals(result.data.goals)
+      setCurrentAssets(result.data.total_assets)
+      setError('')
     } catch (loadError) {
       setError(getApiError(loadError))
     }
@@ -36,10 +34,11 @@ function GoalsPage() {
   useEffect(() => {
     let ignore = false
 
-    getGoals()
+    getDashboard()
       .then((result) => {
         if (ignore) return
-        setGoals(result.data)
+        setGoals(result.data.goals)
+        setCurrentAssets(result.data.total_assets)
         setLoading(false)
       })
       .catch((loadError) => {
@@ -54,6 +53,13 @@ function GoalsPage() {
   }, [])
 
   const atLimit = goals.length >= MAX_GOALS && editingId === null
+  const today = koreanToday()
+  const editingGoal = editingId === null ? null : goals.find((goal) => goal.goal_id === editingId)
+  const criteria = formBadgeCriteria(currentAssets, editingGoal, today)
+  const badgeMessage = goalBadgeMessage({
+    criteria, targetAmount: form.target_amount, targetDate: form.target_date,
+    currentAssets, editing: editingId !== null, today,
+  })
 
   const startCreate = () => {
     setEditingId(null)
@@ -159,6 +165,11 @@ function GoalsPage() {
                     </div>
 
                     <Notice type="info">{goal.requires_target_update ? "초기 자산 설정 전에 만든 목표입니다. 현재 총자산보다 큰 금액으로 수정해 주세요." : ""}</Notice>
+                    {done && goal.badge_criteria && (
+                      <Notice type="info">{goal.badge_criteria.eligible
+                        ? '목표 달성 뱃지 인정 조건을 충족한 실적입니다.'
+                        : '목표는 완료되었지만 목표 달성 뱃지 인정 조건을 충족하지 않아 실적에 포함되지 않습니다. 이미 받은 뱃지는 유지됩니다.'}</Notice>
+                    )}
                     <div className="goal-card-actions">
                       {!done && (
                         <button type="button" className="goal-edit-button" onClick={() => startEdit(goal)}>수정</button>
@@ -175,6 +186,18 @@ function GoalsPage() {
             <span className="card-label">{editingId === null ? '새 목표' : '목표 수정'}</span>
             <h2>{editingId === null ? '저축 목표 만들기' : '저축 목표 수정'}</h2>
             <p>초기 자산을 설정한 뒤 목표를 만들 수 있습니다. 목표 금액은 1원 이상 10억 원 이하이며, 현재 총자산보다 커야 합니다. 목표일은 오늘 이후여야 합니다.</p>
+            {currentAssets !== null && (
+              <div className="notice notice-info">
+                <p>현재 총자산: <strong>{won(currentAssets)}</strong></p>
+                <p>{editingId !== null && criteria.baseline_known ? '이 목표의' : '새 목표의 현재 기준'} 뱃지 인정 최소 목표금액: <strong>{criteria.assets_at_creation === 0 ? '인정 대상 아님 (생성 당시 총자산 0원)' : won(criteria.minimum_target_amount)}</strong></p>
+                <p>뱃지 인정 최소 목표기간: <strong>생성일부터 7일</strong> (목표일 {addCalendarDays(criteria.created_on, criteria.minimum_period_days)} 이후, 해당 날짜 포함)</p>
+                <p>{GOAL_BADGE_WAIT_NOTICE}</p>
+                <p>{editingId !== null && criteria.baseline_known
+                  ? `생성 당시 총자산 ${won(criteria.assets_at_creation)} 및 생성일 ${criteria.created_on}을 기준으로 수정한 금액과 기간을 판단합니다.`
+                  : '뱃지는 목표 생성 당시 총자산의 105% 이상인 목표금액을 기준으로 인정합니다.'}</p>
+                <p>뱃지 조건을 만족하지 않아도 현재 총자산보다 큰 목표는 만들 수 있습니다. 총자산은 시장가격에 따라 달라질 수 있으며 저장할 때 다시 확인합니다.</p>
+              </div>
+            )}
 
             {atLimit ? (
               <Notice type="info">
@@ -198,7 +221,7 @@ function GoalsPage() {
                   <input
                     id="target_amount"
                     type="number"
-                    min="1"
+                    min={currentAssets === null ? 1 : Math.max(1, Number(currentAssets) + 1)}
                     max="1000000000"
                     required
                     value={form.target_amount}
@@ -211,16 +234,17 @@ function GoalsPage() {
                 <input
                   id="target_date"
                   type="date"
-                  min={tomorrow()}
+                  min={addCalendarDays(today, 1)}
                   required
                   value={form.target_date}
                   onChange={change('target_date')}
                 />
 
                 <Notice type="error">{formError}</Notice>
+                <div aria-live="polite"><Notice type="info">{currentAssets !== null ? badgeMessage : ''}</Notice></div>
 
                 <div className="button-row goal-form-buttons">
-                  <button type="submit" className="service-primary-button" disabled={busy}>
+                  <button type="submit" className="service-primary-button" disabled={busy || currentAssets === null}>
                     {editingId === null ? '목표 만들기' : '수정 저장'}
                   </button>
                   {editingId !== null && (

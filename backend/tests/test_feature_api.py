@@ -82,8 +82,9 @@ def test_goal_validation(client, auth, overrides, status, code):
     assert SavingGoal.query.count() == 0
 
 
-def test_completed_goal_and_badge_are_recorded_once(client, auth, make_goal):
+def test_completed_goal_and_badge_are_recorded_once(client, auth, make_goal, goal_clock):
     goal = make_goal(target_amount=1500)
+    goal_clock.advance(days=7)
     Account.query.filter_by(user_id=1).one().balance = 1500
     db.session.commit()
     for _ in range(2):

@@ -89,7 +89,10 @@ def test_legacy_goal_cannot_complete_from_initial_funding_but_can_be_revised(cli
     db.session.commit()
     result = data(client.get("/api/dashboard", headers=auth()))
     assert result["goals"][0]["status"] == "COMPLETED"
-    assert [badge["code"] for badge in result["badges"]] == ["FIRST_GOAL"]
+    # No creation-time asset snapshot exists for this legacy goal. Completion
+    # remains available, but it cannot prove the new badge criteria.
+    assert result["goals"][0]["badge_criteria"]["baseline_known"] is False
+    assert result["badges"] == []
 
 
 def test_recovery_goal_below_original_funding_is_still_eligible(client, auth, make_goal):
