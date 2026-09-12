@@ -22,6 +22,17 @@ from app.services.feature_common import fail, get_row, serialize, page
 from app.services.audit_service import audit
 
 
+MAX_ATTACHMENT_COUNT = 5
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_PIXELS = 16_000_000
+ALLOWED_IMAGE_TYPES = {
+    ".png": ("PNG", "image/png"),
+    ".jpg": ("JPEG", "image/jpeg"),
+    ".jpeg": ("JPEG", "image/jpeg"),
+    ".webp": ("WEBP", "image/webp"),
+}
+
+
 def live_post(post_id, owner=None, lock=False):
     row = get_row(Post, post_id, owner=owner, lock=lock)
 
@@ -485,163 +496,125 @@ def create_inquiry(
     return inquiry_data(row)
 
 
-def upload(
-    user_id,
-    kind,
-    parent_id,
-    files,
-):
+def _upload_parent(user_id, kind, parent_id):
     if kind == "POST":
         live_post(
             parent_id,
             owner=user_id,
             lock=True,
         )
+        return {"post_id": parent_id}
 
-        parent = {
-            "post_id": parent_id,
-        }
+    get_row(
+        Inquiry,
+        parent_id,
+        owner=user_id,
+        lock=True,
+    )
+    return {"inquiry_id": parent_id}
 
-    else:
-        get_row(
-            Inquiry,
-            parent_id,
-            owner=user_id,
-            lock=True,
-        )
 
-        parent = {
-            "inquiry_id": parent_id,
-        }
-
-    if (
-        not files
-        or len(files)
-        + Attachment.query.filter_by(
-            **parent
-        ).count()
-        > 5
-    ):
+def _validate_attachment_count(parent, files):
+    if not files:
         fail(
             "IMAGE_LIMIT",
             "이미지는 1~5개까지 첨부할 수 있습니다.",
             422,
         )
 
-    allowed = {
-        ".png": (
-            "PNG",
-            "image/png",
-        ),
-        ".jpg": (
-            "JPEG",
-            "image/jpeg",
-        ),
-        ".jpeg": (
-            "JPEG",
-            "image/jpeg",
-        ),
-        ".webp": (
-            "WEBP",
-            "image/webp",
-        ),
-    }
-
-    for file in files:
-        extension = PurePath(
-            file.filename or "",
-        ).suffix.lower()
-
-        if (
-            extension not in allowed
-            or file.mimetype
-            != allowed[extension][1]
-        ):
-            fail(
-                "INVALID_IMAGE",
-                "PNG, JPEG, WebP 이미지만 허용합니다.",
-                422,
-            )
-
-        raw = file.read(
-            10 * 1024 * 1024 + 1
+    existing_count = Attachment.query.filter_by(**parent).count()
+    if len(files) + existing_count > MAX_ATTACHMENT_COUNT:
+        fail(
+            "IMAGE_LIMIT",
+            "이미지는 1~5개까지 첨부할 수 있습니다.",
+            422,
         )
 
-        if len(raw) > 10 * 1024 * 1024:
-            fail(
-                "IMAGE_TOO_LARGE",
-                "이미지는 파일당 10MB 이하입니다.",
-                413,
+
+def _encode_image(file):
+    extension = PurePath(file.filename or "").suffix.lower()
+    image_type = ALLOWED_IMAGE_TYPES.get(extension)
+
+    if image_type is None or file.mimetype != image_type[1]:
+        fail(
+            "INVALID_IMAGE",
+            "PNG, JPEG, WebP 이미지만 허용합니다.",
+            422,
+        )
+
+    raw = file.read(MAX_IMAGE_BYTES + 1)
+    if len(raw) > MAX_IMAGE_BYTES:
+        fail(
+            "IMAGE_TOO_LARGE",
+            "이미지는 파일당 10MB 이하입니다.",
+            413,
+        )
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter(
+                "error",
+                Image.DecompressionBombWarning,
             )
 
-        try:
-            with warnings.catch_warnings():
-                warnings.simplefilter(
-                    "error",
-                    Image.DecompressionBombWarning,
+            with Image.open(BytesIO(raw)) as image:
+                if (
+                    image.format != image_type[0]
+                    or image.width * image.height > MAX_IMAGE_PIXELS
+                ):
+                    fail(
+                        "INVALID_IMAGE",
+                        "이미지 형식 또는 해상도가 허용 범위를 벗어납니다.",
+                        422,
+                    )
+
+                image.load()
+                clean = image.convert(
+                    "RGB" if image.format == "JPEG" else "RGBA"
                 )
+                output = BytesIO()
+                clean.save(output, format=image_type[0])
+                encoded = output.getvalue()
 
-                with Image.open(
-                    BytesIO(raw)
-                ) as image:
-                    if (
-                        image.format
-                        != allowed[extension][0]
-                        or image.width
-                        * image.height
-                        > 16000000
-                    ):
-                        fail(
-                            "INVALID_IMAGE",
-                            "이미지 형식 또는 해상도가 허용 범위를 벗어납니다.",
-                            422,
-                        )
-
-                    image.load()
-
-                    clean = image.convert(
-                        "RGB"
-                        if image.format == "JPEG"
-                        else "RGBA"
+                if len(encoded) > MAX_IMAGE_BYTES:
+                    fail(
+                        "IMAGE_TOO_LARGE",
+                        "변환된 이미지는 10MB 이하이어야 합니다.",
+                        413,
                     )
 
-                    output = BytesIO()
+    except (
+        UnidentifiedImageError,
+        OSError,
+        ValueError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ):
+        fail(
+            "INVALID_IMAGE",
+            "이미지를 읽을 수 없습니다.",
+            422,
+        )
 
-                    clean.save(
-                        output,
-                        format=allowed[extension][0],
-                    )
+    return image_type[1], encoded
 
-                    encoded = output.getvalue()
 
-                    if (
-                        len(encoded)
-                        > 10 * 1024 * 1024
-                    ):
-                        fail(
-                            "IMAGE_TOO_LARGE",
-                            "변환된 이미지는 10MB 이하이어야 합니다.",
-                            413,
-                        )
+def upload(
+    user_id,
+    kind,
+    parent_id,
+    files,
+):
+    parent = _upload_parent(user_id, kind, parent_id)
+    _validate_attachment_count(parent, files)
 
-        except (
-            UnidentifiedImageError,
-            OSError,
-            ValueError,
-            Image.DecompressionBombError,
-            Image.DecompressionBombWarning,
-        ):
-            fail(
-                "INVALID_IMAGE",
-                "이미지를 읽을 수 없습니다.",
-                422,
-            )
-
+    for file in files:
+        mime_type, encoded = _encode_image(file)
         db.session.add(
             Attachment(
                 attachment_id=uuid.uuid4().hex,
                 user_id=user_id,
-                mime_type=allowed[extension][1],
+                mime_type=mime_type,
                 data=encoded,
                 **parent,
             )
@@ -649,14 +622,9 @@ def upload(
 
     audit(
         "IMAGE_UPLOAD",
-        "posts"
-        if kind == "POST"
-        else "inquiries",
+        "posts" if kind == "POST" else "inquiries",
         parent_id,
     )
 
     db.session.commit()
-
-    return attachment_list(
-        **parent
-    )
+    return attachment_list(**parent)

@@ -44,178 +44,47 @@ from app.services.ledger_service import create_ledger
 # ----------------------------------------------------------------
 # 종목 목록 조회
 
-def get_assets(
-    market=None,
-    search="",
-):
-    """
-    투자 화면에 표시할 종목 목록을 반환한다.
+_ALLOWED_MARKETS = {"KR", "US"}
+_DEFAULT_ASSET_LIMIT = 20
+_SEARCH_ASSET_LIMIT = 50
+_EXTERNAL_SEARCH_LIMIT = 20
+_KR_SYMBOL_SUFFIXES = (".KS", ".KQ")
 
-    검색어가 없을 때:
-        DB에서 최대 20개만 반환
 
-    검색어가 있을 때:
-        DB 전체 종목에서 이름/코드 검색
-        최대 50개 반환
+def _normalize_market_filter(market):
+    if not market:
+        return None
 
-    미국 종목은 DB 검색 결과가 부족하면
-        Yahoo Finance 검색 결과도 추가한다.
-    """
-
-    if market:
-        market = (
-            market
-            .strip()
-            .upper()
+    normalized = market.strip().upper()
+    if normalized not in _ALLOWED_MARKETS:
+        raise BusinessException(
+            code="INVALID_MARKET",
+            message="지원하지 않는 시장입니다.",
+            status_code=422,
         )
-
-        if market not in {
-            "KR",
-            "US",
-        }:
-            raise BusinessException(
-                code="INVALID_MARKET",
-                message="지원하지 않는 시장입니다.",
-                status_code=422,
-            )
-
-    search = (
-        search
-        or ""
-    ).strip()
+    return normalized
 
 
-    query = MarketAsset.query.filter_by(
-        is_active=True,
-    )
-
-
-    if market:
-        query = query.filter_by(
-            market=market,
-        )
-
-
-    # ------------------------------------------------------------
-    # 검색어가 있는 경우
-    #
-    # DB 전체 종목을 대상으로 부분 검색한다.
-
-    if search:
-        keyword = f"%{search}%"
-
-        query = query.filter(
-            db.or_(
-                MarketAsset.symbol.ilike(
-                    keyword,
-                ),
-                MarketAsset.name.ilike(
-                    keyword,
-                ),
-            )
-        )
-
-        db_assets = (
-            query
-            .order_by(
-                MarketAsset.name.asc(),
-            )
-            .limit(50)
-            .all()
-        )
-
-
-    # ------------------------------------------------------------
-    # 검색어가 없는 경우
-    #
-    # 수천 종목을 화면에 모두 보내지 않고 20개만 보여준다.
-
-    else:
-        db_assets = (
-            query
-            .order_by(
-                MarketAsset.asset_id.asc(),
-            )
-            .limit(20)
-            .all()
-        )
-
-
-    results = [
-        {
-            "asset_id":
-                asset.asset_id,
-
-            "symbol":
-                asset.symbol,
-
-            "name":
-                asset.name,
-
-            "asset_type":
-                asset.asset_type,
-
-            "market":
-                asset.market,
-
-            "is_active":
-                asset.is_active,
-
-            "source":
-                "DB",
-        }
-        for asset in db_assets
-    ]
-
-
-    # ------------------------------------------------------------
-    # 검색어가 없으면 DB 기본 목록만 반환
-
-    if not search:
-        return results
-
-
-    # ------------------------------------------------------------
-    # 국내 종목
-    #
-    # 국내는 전체 종목 마스터가 DB에 있으므로
-    # Yahoo 검색을 사용하지 않는다.
-
-    if market == "KR":
-        return results
-
-
-    # ------------------------------------------------------------
-    # 미국 종목
-    #
-    # 기존 방식처럼 Yahoo Finance 검색 결과도 합친다.
-
-    external_assets = (
-        market_data_service
-        .search_assets(
-            query=search,
-            market=market,
-            max_results=20,
-        )
-    )
-
-
-    existing_keys = {
-        (
-            item["symbol"],
-            item["market"],
-        )
-        for item in results
+def _serialize_asset(asset):
+    return {
+        "asset_id": asset.asset_id,
+        "symbol": asset.symbol,
+        "name": asset.name,
+        "asset_type": asset.asset_type,
+        "market": asset.market,
+        "is_active": asset.is_active,
+        "source": "DB",
     }
 
 
+def _append_external_assets(results, external_assets):
+    existing_keys = {
+        (item["symbol"], item["market"])
+        for item in results
+    }
+
     for asset in external_assets:
-
-        key = (
-            asset["symbol"],
-            asset["market"],
-        )
-
+        key = (asset["symbol"], asset["market"])
         if key in existing_keys:
             continue
 
@@ -228,17 +97,57 @@ def get_assets(
             "is_active": True,
             "source": "YFINANCE",
         })
+        existing_keys.add(key)
 
-        existing_keys.add(
-            key,
-        )
-
-        # 검색 결과가 지나치게 많아지지 않게 제한
-        if len(results) >= 50:
+        if len(results) >= _SEARCH_ASSET_LIMIT:
             break
 
-
     return results
+
+
+def get_assets(market=None, search=""):
+    """투자 화면에 표시할 종목 목록을 반환한다."""
+    market = _normalize_market_filter(market)
+    search = (search or "").strip()
+
+    query = MarketAsset.query.filter_by(is_active=True)
+    if market:
+        query = query.filter_by(market=market)
+
+    if search:
+        keyword = f"%{search}%"
+        query = query.filter(
+            db.or_(
+                MarketAsset.symbol.ilike(keyword),
+                MarketAsset.name.ilike(keyword),
+            )
+        )
+        db_assets = (
+            query
+            .order_by(MarketAsset.name.asc())
+            .limit(_SEARCH_ASSET_LIMIT)
+            .all()
+        )
+    else:
+        db_assets = (
+            query
+            .order_by(MarketAsset.asset_id.asc())
+            .limit(_DEFAULT_ASSET_LIMIT)
+            .all()
+        )
+
+    results = [_serialize_asset(asset) for asset in db_assets]
+
+    if not search or market == "KR":
+        return results
+
+    external_assets = market_data_service.search_assets(
+        query=search,
+        market=market,
+        max_results=_EXTERNAL_SEARCH_LIMIT,
+    )
+    return _append_external_assets(results, external_assets)
+
 
 # ----------------------------------------------------------------
 # 현재가 조회
@@ -304,87 +213,190 @@ def get_price(symbol, market):
 # ----------------------------------------------------------------
 # 주문
 
-def create_order(
+
+def _canonical_order_symbol(symbol):
+    normalized = symbol.strip().upper()
+    if normalized.endswith(_KR_SYMBOL_SUFFIXES) and len(normalized[:-3]) == 6:
+        return normalized[:-3]
+    return normalized
+
+
+def _lock_registered_asset(symbol):
+    return (
+        MarketAsset.query
+        .filter_by(symbol=symbol)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
+
+
+def _require_registered_asset_active(registered):
+    if registered is not None and not registered.is_active:
+        raise BusinessException(
+            code="ASSET_INACTIVE",
+            message="거래가 중지된 종목입니다.",
+            status_code=422,
+        )
+
+
+def _validate_order_metadata(requested_market, registered, quote):
+    verified_market = Market(quote["market"])
+    registered_mismatch = registered is not None and (
+        registered.market != quote["market"]
+        or registered.asset_type != quote["asset_type"]
+    )
+    if requested_market != verified_market or registered_mismatch:
+        raise BusinessException(
+            code="ASSET_METADATA_MISMATCH",
+            status_code=422,
+            message="요청 또는 등록된 종목 정보가 실제 시장·자산 유형과 일치하지 않습니다.",
+        )
+
+    return verified_market
+
+
+def _prepare_sell_holding(user_id, symbol, market, quantity):
+    asset = _find_asset(symbol, market)
+    holding = _find_holding(user_id, asset.asset_id)
+
+    if holding.quantity < quantity:
+        raise BusinessException(
+            code=InvestmentErrorCode.INSUFFICIENT_HOLDINGS,
+            message="보유 수량이 부족합니다.",
+            status_code=422,
+        )
+
+    return asset, holding
+
+
+def _calculate_order_amounts(quote, quantity, exchange_rate, market, side):
+    amount = quote["price"] * quantity
+    amount_krw = to_krw(amount, exchange_rate)
+    fee = calculate_fee(amount_krw, market)
+    tax = calculate_tax(amount_krw, market, side)
+    settlement_amount_krw = calculate_settlement(
+        amount_krw,
+        fee,
+        tax,
+        side,
+    )
+    return amount, amount_krw, fee, tax, settlement_amount_krw
+
+
+def _apply_account_settlement(account, side, settlement_amount_krw):
+    if side == OrderSide.BUY:
+        debit(account, settlement_amount_krw)
+    else:
+        credit(account, settlement_amount_krw)
+
+
+def _create_market_transaction(
     user_id,
-    symbol,
-    market,
+    asset,
     side,
     quantity,
+    quote,
+    exchange_rate,
+    amount,
+    amount_krw,
+    session,
+    fee,
+    tax,
 ):
-    """
-    시장가 주문을 체결한다.
+    transaction = MarketTransaction(
+        user_id=user_id,
+        asset_id=asset.asset_id,
+        side=side.value,
+        quantity=quantity,
+        price=quote["price"],
+        exchange_rate=exchange_rate,
+        amount=amount,
+        amount_krw=amount_krw,
+        market_session=session.value,
+        fee=fee,
+        tax=tax,
+    )
+    db.session.add(transaction)
+    db.session.flush()
+    return transaction
 
-    처리 순서:
-        시장 상태 확인
-        → 현재가 확인
-        → 환율 확인
-        → 원화 금액 계산
-        → 계좌 잔액 변경
-        → 거래 기록 생성
-        → 원장 기록
-        → 보유자산 반영
-        → commit
-    """
 
-    market = Market(market)
+def _create_order_ledger(account, transaction, side, settlement_amount_krw):
+    is_buy = side == OrderSide.BUY
+    create_ledger(
+        account=account,
+        transaction_type=(
+            TransactionType.STOCK_BUY.value
+            if is_buy
+            else TransactionType.STOCK_SELL.value
+        ),
+        amount=settlement_amount_krw,
+        entry_type=(
+            EntryType.DEBIT.value
+            if is_buy
+            else EntryType.CREDIT.value
+        ),
+        reference_type=LEDGER_REFERENCE_TYPE_MARKET,
+        reference_id=transaction.market_transaction_id,
+    )
+
+
+def _update_order_holding(
+    user_id,
+    asset,
+    side,
+    quantity,
+    amount,
+    settlement_amount_krw,
+    holding=None,
+):
+    if side == OrderSide.BUY:
+        holding = _get_or_create_holding(user_id, asset.asset_id)
+        _increase_holding(
+            holding,
+            quantity,
+            amount,
+            settlement_amount_krw,
+        )
+    else:
+        _reduce_holding(holding, quantity)
+
+    return holding
+
+
+def create_order(user_id, symbol, market, side, quantity):
+    """시장가 주문을 하나의 트랜잭션으로 체결한다."""
+    requested_market = Market(market)
     side = OrderSide(side)
     quantity = Decimal(quantity)
-    symbol = symbol.strip().upper()
-    requested_symbol = symbol
-    # KR listings are stored by their six-character code. Use that same
-    # identity for the active flag and holdings even when a suffix is supplied.
-    if symbol.endswith((".KS", ".KQ")) and len(symbol[:-3]) == 6:
-        symbol = symbol[:-3]
+    requested_symbol = symbol.strip().upper()
+    symbol = _canonical_order_symbol(requested_symbol)
 
     try:
-        account = get_account_by_user_id(
-            user_id
+        # 동일 사용자의 계좌 변경을 먼저 직렬화한다.
+        account = get_account_by_user_id(user_id)
+
+        registered = _lock_registered_asset(symbol)
+        _require_registered_asset_active(registered)
+        quote = market_data_service.fetch_order_quote(requested_symbol)
+        market = _validate_order_metadata(
+            requested_market,
+            registered,
+            quote,
         )
 
-        registered = MarketAsset.query.filter_by(symbol=symbol).populate_existing().with_for_update().first()
-        if registered is not None and not registered.is_active:
-            raise BusinessException(code="ASSET_INACTIVE", message="거래가 중지된 종목입니다.", status_code=422)
-        quote = market_data_service.fetch_order_quote(requested_symbol)
-        verified_market = Market(quote["market"])
-        if market != verified_market or (registered is not None and (
-            registered.market != quote["market"] or registered.asset_type != quote["asset_type"]
-        )):
-            raise BusinessException(code="ASSET_METADATA_MISMATCH", status_code=422,
-                                    message="요청 또는 등록된 종목 정보가 실제 시장·자산 유형과 일치하지 않습니다.")
-        # All session, FX, fee/tax and settlement decisions below use this value.
-        market = verified_market
-
-        # 매도는 주문 전에 보유 수량을 먼저 확인한다
+        holding = None
         if side == OrderSide.SELL:
-            asset = _find_asset(
+            asset, holding = _prepare_sell_holding(
+                user_id,
                 symbol,
                 market,
+                quantity,
             )
 
-            holding = _find_holding(
-                user_id,
-                asset.asset_id,
-            )
-
-            if holding.quantity < quantity:
-                raise BusinessException(
-                    code=(
-                        InvestmentErrorCode
-                        .INSUFFICIENT_HOLDINGS
-                    ),
-                    message="보유 수량이 부족합니다.",
-                    status_code=422,
-                )
-
-        session = _require_tradable_session(
-            market
-        )
-
-        exchange_rate = (
-            _resolve_exchange_rate(
-                market
-            )
-        )
+        session = _require_tradable_session(market)
+        exchange_rate = _resolve_exchange_rate(market)
 
         if side == OrderSide.BUY:
             asset = _get_or_create_asset(
@@ -394,122 +406,56 @@ def create_order(
                 asset_type=quote["asset_type"],
             )
 
-        amount = (
-            quote["price"]
-            * quantity
-        )
-
-        amount_krw = to_krw(
+        (
             amount,
+            amount_krw,
+            fee,
+            tax,
+            settlement_amount_krw,
+        ) = _calculate_order_amounts(
+            quote,
+            quantity,
             exchange_rate,
-        )
-
-        fee = calculate_fee(
-            amount_krw,
-            market,
-        )
-
-        tax = calculate_tax(
-            amount_krw,
             market,
             side,
         )
 
-        settlement_amount_krw = (
-            calculate_settlement(
-                amount_krw,
-                fee,
-                tax,
-                side,
-            )
+        _apply_account_settlement(
+            account,
+            side,
+            settlement_amount_krw,
         )
 
-        # 1. 계좌 잔액 변경
-        if side == OrderSide.BUY:
-            debit(
-                account,
-                settlement_amount_krw,
-            )
-
-        else:
-            credit(
-                account,
-                settlement_amount_krw,
-            )
-
-        # 2. 거래 기록 생성
-        transaction = MarketTransaction(
-            user_id=user_id,
-            asset_id=asset.asset_id,
-            side=side.value,
-            quantity=quantity,
-            price=quote["price"],
-            exchange_rate=exchange_rate,
-            amount=amount,
-            amount_krw=amount_krw,
-            market_session=session.value,
-            fee=fee,
-            tax=tax,
+        transaction = _create_market_transaction(
+            user_id,
+            asset,
+            side,
+            quantity,
+            quote,
+            exchange_rate,
+            amount,
+            amount_krw,
+            session,
+            fee,
+            tax,
         )
 
-        db.session.add(
-            transaction
+        _create_order_ledger(
+            account,
+            transaction,
+            side,
+            settlement_amount_krw,
         )
 
-        db.session.flush()
-
-        # 3. 원장 기록
-        create_ledger(
-            account=account,
-            transaction_type=(
-                TransactionType
-                .STOCK_BUY
-                .value
-                if side == OrderSide.BUY
-                else TransactionType
-                .STOCK_SELL
-                .value
-            ),
-            amount=settlement_amount_krw,
-            entry_type=(
-                EntryType
-                .DEBIT
-                .value
-                if side == OrderSide.BUY
-                else EntryType
-                .CREDIT
-                .value
-            ),
-            reference_type=(
-                LEDGER_REFERENCE_TYPE_MARKET
-            ),
-            reference_id=(
-                transaction
-                .market_transaction_id
-            ),
+        holding = _update_order_holding(
+            user_id,
+            asset,
+            side,
+            quantity,
+            amount,
+            settlement_amount_krw,
+            holding=holding,
         )
-
-        # 4. 보유자산 반영
-        if side == OrderSide.BUY:
-            holding = (
-                _get_or_create_holding(
-                    user_id,
-                    asset.asset_id,
-                )
-            )
-
-            _increase_holding(
-                holding,
-                quantity,
-                amount,
-                settlement_amount_krw,
-            )
-
-        else:
-            _reduce_holding(
-                holding,
-                quantity,
-            )
 
         db.session.commit()
 
@@ -521,13 +467,9 @@ def create_order(
         transaction=transaction,
         asset=asset,
         market=market,
-        settlement_amount_krw=(
-            settlement_amount_krw
-        ),
+        settlement_amount_krw=settlement_amount_krw,
         balance_after=account.balance,
-        holding_quantity=(
-            holding.quantity
-        ),
+        holding_quantity=holding.quantity,
     )
 
 
