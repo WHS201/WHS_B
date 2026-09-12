@@ -767,6 +767,12 @@ def _get_or_create_holding(
 ):
     """
     보유 기록을 가져오거나 새로 만든다.
+
+    주문 처리에서는 사용자 계좌를 먼저 FOR UPDATE로 잠근 뒤
+    이 함수를 호출한다.
+
+    MySQL REPEATABLE READ에서 이전 snapshot의 holding 값을
+    사용하지 않도록 locking read로 최신 상태를 다시 조회한다.
     """
 
     holding = (
@@ -775,6 +781,8 @@ def _get_or_create_holding(
             user_id=user_id,
             asset_id=asset_id,
         )
+        .populate_existing()
+        .with_for_update()
         .first()
     )
 
@@ -805,8 +813,8 @@ def _find_holding(
     asset_id,
 ):
     """
-    보유 기록을 조회한다.
-    없으면 매도할 수 없다.
+    최신 보유 기록을 locking read로 조회한다.
+    없거나 수량이 없으면 매도할 수 없다.
     """
 
     holding = (
@@ -815,6 +823,8 @@ def _find_holding(
             user_id=user_id,
             asset_id=asset_id,
         )
+        .populate_existing()
+        .with_for_update()
         .first()
     )
 

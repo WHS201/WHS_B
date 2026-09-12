@@ -107,7 +107,16 @@ def terminate(user_id, saving_id):
             db.or_(EarlyTerminationRateRule.maximum_holding_days.is_(None), EarlyTerminationRateRule.maximum_holding_days >= days)
         ).order_by(EarlyTerminationRateRule.minimum_holding_days.desc()).first()
         if rule is None: raise BusinessException(code="EARLY_TERMINATION_RULE_NOT_FOUND", message="중도해지 이율 규칙을 찾을 수 없습니다.", status_code=422)
-        paid = SavingPayment.query.filter_by(saving_id=saving_id, status="PAID").all()
+        paid = (
+            SavingPayment.query
+            .filter_by(
+                saving_id=saving_id,
+                status="PAID"
+            )
+            .populate_existing()
+            .with_for_update()
+            .all()
+        )
         result = calculate_saving_termination(paid, item.option, rule, date.today())
         item.status="TERMINATED"; item.applied_early_termination_rate=result["applied_rate"]
         item.gross_interest=result["gross_interest"]; item.tax_rate=GENERAL_TAX_RATE

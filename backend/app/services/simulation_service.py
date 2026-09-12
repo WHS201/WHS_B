@@ -20,9 +20,13 @@ from app.constants import (
 def set_initial_asset(user_id, initial_asset):
     account = get_account_by_user_id(user_id)
 
-    setting = SimulationSetting.query.filter_by(
-        user_id=user_id
-    ).first()
+    setting = (
+        SimulationSetting.query
+        .filter_by(user_id=user_id)
+        .populate_existing()
+        .with_for_update()
+        .first()
+    )
 
     if setting is None:
         raise BusinessException(
