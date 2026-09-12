@@ -10,10 +10,25 @@ from dotenv import load_dotenv
 from werkzeug.exceptions import HTTPException
 
 
+def _validate_production_secrets(config):
+    if str(config.get("APP_ENV", "")).strip().lower() not in {"production", "prod"}:
+        return
+    defaults = {"change-me-in-env", "change-me", "changeme", "dev-secret", "dev-secret-key", "your-secret-key", "your-jwt-secret-key"}
+    invalid = []
+    for name in ("SECRET_KEY", "JWT_SECRET_KEY", "SOCIAL_SIGNUP_TOKEN_SECRET"):
+        value = config.get(name)
+        if not isinstance(value, str) or not value.strip() or value.strip().lower() in defaults:
+            invalid.append(name)
+    if invalid:
+        # Report field names only. Never include secret values or the config.
+        raise RuntimeError("Production requires non-default signing secrets: " + ", ".join(invalid))
+
+
 def create_app(test_config=None):
     if test_config is None:
         load_dotenv()
     app = Flask(__name__)
+    app.config["APP_ENV"] = os.environ.get("APP_ENV", os.environ.get("FLASK_ENV", "development"))
 
     # --- 설정 ---
     app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
@@ -77,6 +92,7 @@ def create_app(test_config=None):
     )
     if test_config is not None:
         app.config.update(test_config)
+    _validate_production_secrets(app.config)
 
     # --- 확장 초기화 ---
     db.init_app(app)

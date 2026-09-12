@@ -392,6 +392,71 @@ def fetch_quote(symbol, market):
     ) from last_error
 
 
+def fetch_order_quote(symbol):
+    """Verify a listing independently of the client's market before using its price.
+
+    The symbol format is only a lookup hint. Exchange, currency, symbol identity
+    and instrument type must all be supplied by the same provider listing.
+    """
+    symbol = symbol.strip().upper()
+    candidates = ([f"{symbol}.KS", f"{symbol}.KQ", symbol]
+                  if len(symbol) == 6 and symbol.isalnum() else [symbol])
+    exchanges = {
+        "KSC": Market.KR, "KOE": Market.KR,
+        "NMS": Market.US, "NGM": Market.US, "NCM": Market.US,
+        "NYS": Market.US, "NYQ": Market.US, "ASE": Market.US,
+        "PCX": Market.US, "NASDAQ": Market.US, "NYSE": Market.US,
+    }
+    for candidate in candidates:
+        try:
+            ticker = yf.Ticker(candidate)
+            info = ticker.get_info()
+        except Exception:
+            continue
+        if not isinstance(info, dict) or not all(
+            isinstance(info.get(key), str) and info[key].strip()
+            for key in ("symbol", "exchange", "currency", "quoteType")
+        ):
+            continue
+        actual_symbol = info["symbol"].strip().upper()
+        exchange = info["exchange"].strip().upper()
+        market = exchanges.get(exchange)
+        quote_type = info["quoteType"].strip().upper()
+        currency = info["currency"].strip().upper()
+        if (actual_symbol != candidate or market is None
+                or quote_type not in {"EQUITY", "ETF"}
+                or currency != ("KRW" if market == Market.KR else "USD")
+                or (market == Market.KR and not actual_symbol.endswith(
+                    ".KS" if exchange == "KSC" else ".KQ"))
+                or (market == Market.US and actual_symbol.endswith((".KS", ".KQ")))):
+            raise BusinessException(
+                code="ASSET_METADATA_MISMATCH", status_code=422,
+                message="종목의 실제 시장·거래소·통화·자산 유형이 지원 조건과 일치하지 않습니다.",
+            )
+        try:
+            fast = ticker.fast_info
+            price = Decimal(str(fast.get("last_price")))
+            price_currency = fast.get("currency")
+        except Exception:
+            raise BusinessException(code="PRICE_UNAVAILABLE", status_code=503,
+                                    message="검증된 종목의 현재가를 확인할 수 없습니다.") from None
+        if not price.is_finite() or price <= 0:
+            raise BusinessException(code="PRICE_UNAVAILABLE", status_code=503,
+                                    message="유효한 현재가를 확인할 수 없습니다.")
+        if not isinstance(price_currency, str) or price_currency.upper() != currency:
+            raise BusinessException(code="ASSET_METADATA_MISMATCH", status_code=422,
+                                    message="현재가 통화와 종목의 실제 통화가 일치하지 않습니다.")
+        return {
+            "ticker": actual_symbol, "symbol": symbol, "market": market.value,
+            "exchange": exchange, "currency": currency,
+            "asset_type": "ETF" if quote_type == "ETF" else "STOCK",
+            "name": info.get("shortName") or info.get("longName") or symbol,
+            "price": price,
+        }
+    raise BusinessException(code="ASSET_METADATA_UNAVAILABLE", status_code=503,
+                            message="종목의 실제 시장·거래소·통화·자산 유형을 확인할 수 없어 주문할 수 없습니다.")
+
+
 def _resolve_name(
     ticker,
     fallback,

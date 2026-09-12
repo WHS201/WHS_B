@@ -34,14 +34,15 @@ def run_financial_batch():
         # 월 수입과 예·적금 처리에 같은 한국 날짜 기준을 사용합니다.
         reference_date = datetime.now(ZoneInfo("Asia/Seoul")).date()
 
-        # 매월 1일에는 월 수입·지출 처리가 끝난 후 예·적금을 처리합니다.
-        # 월 수입 처리 중 예외가 발생하면 아래 예·적금 처리는 실행되지 않습니다.
-        if reference_date.day == 1:
-            income_result = process_monthly_incomes()
-            app.logger.info(
-                "Monthly income batch result: %s",
-                income_result,
-            )
+        # Every run recovers only eligible, unpaid users for the current month.
+        # Preserve the dependency: all income/expenses finish before savings.
+        income_result = process_monthly_incomes(reference_date=reference_date)
+        if income_result.get("not_due"):
+            app.logger.info("Financial recovery waits for the monthly 00:05 payment time")
+            return
+        if income_result["failed_count"]:
+            app.logger.error("Financial batch deferred until monthly income recovery succeeds: %s", income_result)
+            return
 
         financial_result = run_daily_financial_batch(
             reference_date=reference_date,
@@ -86,7 +87,7 @@ scheduler.add_job(
 )
 
 
-# 매일 00:05 — 1일에는 월 수입·지출 처리 후 예·적금 처리
+# 매일 00:05 — 이번 달 누락 월수입·지출 복구 후 예·적금 처리
 scheduler.add_job(
     run_financial_batch,
     "cron",
@@ -105,4 +106,10 @@ scheduler.add_job(
 
 
 if __name__ == "__main__":
+    # A restart after a missed scheduled run must recover without waiting for
+    # the next month's first day (or the next daily cron).
+    try:
+        run_financial_batch()
+    except Exception:
+        app.logger.exception("Startup financial recovery failed; the daily job will retry")
     scheduler.start()

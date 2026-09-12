@@ -28,17 +28,25 @@ def _process_saving_payment(saving_id, reference_date):
     item = Saving.query.filter_by(
         saving_id=saving_id,
         status="ACTIVE",
-    ).with_for_update().first()
-    if item is None or item.next_payment_date is None:
+    ).populate_existing().with_for_update().first()
+    # A competing run may have advanced the contract after both selected its ID.
+    # Locking reads + populate_existing refresh both InnoDB and ORM state.
+    if item is None or item.next_payment_date is None or item.next_payment_date > reference_date:
+        db.session.commit()
         return None
 
-    sequence = SavingPayment.query.filter_by(saving_id=item.saving_id).count() + 1
+    scheduled_date = item.next_payment_date
+    payments = SavingPayment.query.filter_by(saving_id=item.saving_id).populate_existing().with_for_update().all()
+    if any(payment.scheduled_date == scheduled_date
+           or payment.payment_year_month == scheduled_date.strftime("%Y-%m") for payment in payments):
+        db.session.commit()
+        return None
+    sequence = len(payments) + 1
     if sequence > item.scheduled_payment_count:
         item.next_payment_date = None
         db.session.commit()
         return None
 
-    scheduled_date = item.next_payment_date
     payment = SavingPayment(
         saving_id=item.saving_id,
         payment_sequence=sequence,
@@ -52,6 +60,7 @@ def _process_saving_payment(saving_id, reference_date):
         result = "MISSED"
     else:
         account = get_account_by_user_id(item.user_id)
+        db.session.refresh(account, with_for_update=True)
         try:
             debit(account, item.monthly_amount)
         except BusinessException as error:

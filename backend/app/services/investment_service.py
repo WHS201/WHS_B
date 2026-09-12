@@ -329,11 +329,30 @@ def create_order(
     market = Market(market)
     side = OrderSide(side)
     quantity = Decimal(quantity)
+    symbol = symbol.strip().upper()
+    requested_symbol = symbol
+    # KR listings are stored by their six-character code. Use that same
+    # identity for the active flag and holdings even when a suffix is supplied.
+    if symbol.endswith((".KS", ".KQ")) and len(symbol[:-3]) == 6:
+        symbol = symbol[:-3]
 
     try:
         account = get_account_by_user_id(
             user_id
         )
+
+        registered = MarketAsset.query.filter_by(symbol=symbol).populate_existing().with_for_update().first()
+        if registered is not None and not registered.is_active:
+            raise BusinessException(code="ASSET_INACTIVE", message="거래가 중지된 종목입니다.", status_code=422)
+        quote = market_data_service.fetch_order_quote(requested_symbol)
+        verified_market = Market(quote["market"])
+        if market != verified_market or (registered is not None and (
+            registered.market != quote["market"] or registered.asset_type != quote["asset_type"]
+        )):
+            raise BusinessException(code="ASSET_METADATA_MISMATCH", status_code=422,
+                                    message="요청 또는 등록된 종목 정보가 실제 시장·자산 유형과 일치하지 않습니다.")
+        # All session, FX, fee/tax and settlement decisions below use this value.
+        market = verified_market
 
         # 매도는 주문 전에 보유 수량을 먼저 확인한다
         if side == OrderSide.SELL:
@@ -361,14 +380,6 @@ def create_order(
             market
         )
 
-        quote = (
-            market_data_service
-            .fetch_quote(
-                symbol,
-                market,
-            )
-        )
-
         exchange_rate = (
             _resolve_exchange_rate(
                 market
@@ -380,6 +391,7 @@ def create_order(
                 symbol,
                 market,
                 quote["name"],
+                asset_type=quote["asset_type"],
             )
 
         amount = (
@@ -658,6 +670,7 @@ def _get_or_create_asset(
     symbol,
     market,
     name,
+    asset_type=None,
 ):
     """
     DB에 종목이 없으면 자동 등록한다.
@@ -688,7 +701,7 @@ def _get_or_create_asset(
     asset = MarketAsset(
         symbol=symbol,
         name=name,
-        asset_type=(
+        asset_type=asset_type or (
             market_data_service
             .resolve_asset_type(
                 symbol,
