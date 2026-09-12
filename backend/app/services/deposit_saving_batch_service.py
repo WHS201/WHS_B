@@ -186,10 +186,17 @@ def _mature_saving(saving_id, reference_date):
     if item is None or item.maturity_date > reference_date:
         return False
 
-    paid = SavingPayment.query.filter_by(
-        saving_id=item.saving_id,
-        status="PAID",
-    ).all()
+    paid = (
+        SavingPayment.query
+        .filter_by(
+            saving_id=item.saving_id,
+            status="PAID",
+        )
+        .populate_existing()
+        .with_for_update()
+        .all()
+    )
+
     result = calculate_saving_maturity(
         paid,
         item.applied_interest_rate,

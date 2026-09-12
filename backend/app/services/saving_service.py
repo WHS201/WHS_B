@@ -98,7 +98,6 @@ def terminate(user_id, saving_id):
         if item is None: raise BusinessException(code="SAVING_NOT_FOUND", message="적금을 찾을 수 없습니다.", status_code=404)
         if item.status == "MATURED": raise BusinessException(code="SAVING_ALREADY_MATURED", message="이미 만기 처리된 적금입니다.", status_code=409)
         if item.status == "TERMINATED": raise BusinessException(code="SAVING_ALREADY_TERMINATED", message="이미 중도해지된 적금입니다.", status_code=409)
-        account = get_account_by_user_id(user_id)
         days = max((date.today() - item.start_date).days, 0)
         rule = EarlyTerminationRateRule.query.filter(
             EarlyTerminationRateRule.option_id == item.option_id,
