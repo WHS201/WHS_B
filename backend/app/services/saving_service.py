@@ -36,7 +36,6 @@ def create(user_id, payload):
     product_service.validate_amount(payload["monthly_amount"], option, "월 납입금")
     conditions = product_service.get_conditions(option.option_id, payload["selected_condition_ids"])
     try:
-        account = get_account_by_user_id(user_id)
         start = date.today()
         item = Saving(user_id=user_id, product_id=option.product_id, option_id=option.option_id,
                       monthly_amount=payload["monthly_amount"], scheduled_payment_count=option.term_months,
@@ -117,6 +116,9 @@ def terminate(user_id, saving_id):
             .with_for_update()
             .all()
         )
+
+        account = get_account_by_user_id(user_id)
+
         result = calculate_saving_termination(paid, item.option, rule, date.today())
         item.status="TERMINATED"; item.applied_early_termination_rate=result["applied_rate"]
         item.gross_interest=result["gross_interest"]; item.tax_rate=GENERAL_TAX_RATE
