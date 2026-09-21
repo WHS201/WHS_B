@@ -435,11 +435,23 @@ def fetch_order_quote(symbol):
             )
         try:
             fast = ticker.fast_info
-            price = Decimal(str(fast.get("last_price")))
+            # yfinance 1.6.0의 FastInfo는 last_price를 camelCase 키 또는
+            # 프로퍼티로만 노출한다. snake_case .get()은 None을 돌려준다.
+            raw_price = fast.get("lastPrice")
+            if raw_price is None:
+                raw_price = getattr(fast, "last_price", None)
             price_currency = fast.get("currency")
         except Exception:
             raise BusinessException(code="PRICE_UNAVAILABLE", status_code=503,
                                     message="검증된 종목의 현재가를 확인할 수 없습니다.") from None
+        if raw_price is None:
+            raise BusinessException(code="PRICE_UNAVAILABLE", status_code=503,
+                                    message="검증된 종목의 현재가를 확인할 수 없습니다.")
+        try:
+            price = Decimal(str(raw_price))
+        except Exception:
+            raise BusinessException(code="PRICE_UNAVAILABLE", status_code=503,
+                                    message="유효한 현재가를 확인할 수 없습니다.") from None
         if not price.is_finite() or price <= 0:
             raise BusinessException(code="PRICE_UNAVAILABLE", status_code=503,
                                     message="유효한 현재가를 확인할 수 없습니다.")
