@@ -1,4 +1,17 @@
-from flask import Blueprint, jsonify, request
+import time
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    request,
+)
+
+from sqlalchemy.exc import IntegrityError
+
+from app.errors.exceptions import BusinessException
+from app.extensions import db
+from app.models.features import RequestBucket
+
 from flask_jwt_extended import (
     get_jwt,
     get_jwt_identity,
@@ -24,6 +37,138 @@ auth_bp = Blueprint(
     url_prefix="/api/auth",
 )
 
+def _client_ip():
+    return (
+        request.headers.get("X-Real-IP")
+        or request.remote_addr
+        or "unknown"
+    )
+
+
+def _login_rate_limit():
+    limit = current_app.config.get(
+        "AUTH_LOGIN_REQUESTS_PER_MINUTE",
+        10,
+    )
+
+    bucket_key = (
+        f"auth:login:{_client_ip()}"
+    )
+
+    now = int(time.time()) // 60
+
+    bucket = (
+        RequestBucket.query
+        .filter_by(bucket_key=bucket_key)
+        .with_for_update()
+        .first()
+    )
+
+    if bucket is None:
+        try:
+            with db.session.begin_nested():
+                bucket = RequestBucket(
+                    bucket_key=bucket_key,
+                    window_start=now,
+                    count=0,
+                )
+                db.session.add(bucket)
+                db.session.flush()
+
+        except IntegrityError:
+            bucket = (
+                RequestBucket.query
+                .filter_by(bucket_key=bucket_key)
+                .with_for_update()
+                .one()
+            )
+
+    if bucket.window_start != now:
+        bucket.window_start = now
+        bucket.count = 0
+
+    if bucket.count >= limit:
+        raise BusinessException(
+            code="RATE_LIMITED",
+            message="로그인 요청이 너무 많습니다. 잠시 후 다시 시도해 주세요.",
+            status_code=429,
+        )
+
+    bucket.count += 1
+    db.session.commit()
+
+def _signup_rate_limit():
+    ip = _client_ip()
+
+    minute_limit = current_app.config.get(
+        "AUTH_SIGNUP_REQUESTS_PER_MINUTE",
+        5,
+    )
+
+    day_limit = current_app.config.get(
+        "AUTH_SIGNUP_REQUESTS_PER_DAY",
+        20,
+    )
+
+    current_minute = int(time.time()) // 60
+    current_day = int(time.time()) // 86400
+
+    def consume(bucket_key, window_start, limit):
+        bucket = (
+            RequestBucket.query
+            .filter_by(bucket_key=bucket_key)
+            .with_for_update()
+            .first()
+        )
+
+        if bucket is None:
+            try:
+                with db.session.begin_nested():
+                    bucket = RequestBucket(
+                        bucket_key=bucket_key,
+                        window_start=window_start,
+                        count=0,
+                    )
+                    db.session.add(bucket)
+                    db.session.flush()
+
+            except IntegrityError:
+                bucket = (
+                    RequestBucket.query
+                    .filter_by(bucket_key=bucket_key)
+                    .with_for_update()
+                    .one()
+                )
+
+        if bucket.window_start != window_start:
+            bucket.window_start = window_start
+            bucket.count = 0
+
+        if bucket.count >= limit:
+            raise BusinessException(
+                code="RATE_LIMITED",
+                message=(
+                    "회원가입 요청이 너무 많습니다. "
+                    "잠시 후 다시 시도해 주세요."
+                ),
+                status_code=429,
+            )
+
+        bucket.count += 1
+
+    consume(
+        f"auth:signup:minute:{ip}",
+        current_minute,
+        minute_limit,
+    )
+
+    consume(
+        f"auth:signup:day:{ip}",
+        current_day,
+        day_limit,
+    )
+
+    db.session.commit()
 
 def _token_response(result, message, status_code=200):
     access_token = result.pop("access_token", None)
@@ -42,6 +187,8 @@ def _token_response(result, message, status_code=200):
 
 @auth_bp.post("/signup")
 def signup():
+    _signup_rate_limit()
+    
     payload = SignupSchema().load(
         request.get_json(silent=True) or {}
     )
@@ -61,6 +208,8 @@ def signup():
 
 @auth_bp.post("/login")
 def login():
+    _login_rate_limit()
+
     payload = LoginSchema().load(
         request.get_json(silent=True) or {}
     )

@@ -1,8 +1,4 @@
-from datetime import (
-    datetime,
-    timedelta,
-    timezone,
-)
+from datetime import timedelta
 
 from flask import current_app
 from flask_jwt_extended import (
@@ -37,12 +33,9 @@ from app.utils.social_signup_token import (
 ACCESS_TOKEN_EXPIRES = timedelta(minutes=30)
 REFRESH_TOKEN_EXPIRES = timedelta(days=7)
 
-
-def _utc_now():
-    return (
-        datetime.now(timezone.utc)
-        .replace(tzinfo=None)
-    )
+DUMMY_PASSWORD_HASH = generate_password_hash(
+    "dummy-password-for-login-check"
+)
 
 
 def _commit():
@@ -223,6 +216,11 @@ def login(
     )
 
     if user is None:
+        check_password_hash(
+            DUMMY_PASSWORD_HASH,
+            password,
+        )
+
         current_app.logger.warning(
             "Login failed: user not found"
         )
@@ -236,64 +234,25 @@ def login(
             status_code=401,
         )
 
-    now = _utc_now()
-
-    # 아직 5분 로그인 제한 시간이 지나지 않은 경우
-    if (
-        user.login_locked_until is not None
-        and user.login_locked_until > now
-    ):
-        raise BusinessException(
-            code=ErrorCode.LOGIN_LOCKED,
-            message=(
-                "로그인이 일시적으로 "
-                "제한되었습니다."
-            ),
-            status_code=403,
-        )
-
-    # 5분 제한 시간이 끝난 경우 실패 횟수 초기화
-    if (
-        user.login_locked_until is not None
-        and user.login_locked_until <= now
-    ):
-        user.failed_login_count = 0
-        user.login_locked_until = None
-
-    password_valid = (
-        user.password_hash is not None
-        and check_password_hash(
-            user.password_hash,
-            password,
-        )
+    hash_to_check = (
+        user.password_hash
+        if user.password_hash is not None
+        else DUMMY_PASSWORD_HASH
     )
 
+    password_valid = check_password_hash(
+        hash_to_check,
+        password,
+    )
+
+    if user.password_hash is None:
+        password_valid = False
+
     if not password_valid:
-        user.failed_login_count = (
-            user.failed_login_count or 0
-        ) + 1
-
-        if user.failed_login_count >= 5:
-            user.login_locked_until = (
-                now + timedelta(minutes=5)
-            )
-
         current_app.logger.warning(
             "Login failed for user_id=%s",
             user.user_id,
         )
-
-        _commit()
-
-        if user.failed_login_count >= 5:
-            raise BusinessException(
-                code=ErrorCode.LOGIN_LOCKED,
-                message=(
-                    "로그인이 일시적으로 "
-                    "제한되었습니다."
-                ),
-                status_code=403,
-            )
 
         raise BusinessException(
             code=ErrorCode.INVALID_CREDENTIALS,
@@ -305,12 +264,6 @@ def login(
         )
 
     _check_user_status(user)
-
-    # 로그인 성공 시 실패 횟수 초기화
-    user.failed_login_count = 0
-    user.login_locked_until = None
-
-    _commit()
 
     return _create_token_pair(user)
 
