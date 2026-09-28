@@ -87,38 +87,9 @@ def create_app(test_config=None):
     app.config.update(
         MAX_CONTENT_LENGTH=51 * 1024 * 1024,
         FEATURE_RATE_LIMIT_ENABLED=True,
-        FEATURE_WRITE_REQUESTS_PER_MINUTE=int(
-            os.environ.get(
-                "FEATURE_WRITE_REQUESTS_PER_MINUTE",
-                "30"
-            )
-        ),
-        FEATURE_READ_REQUESTS_PER_MINUTE=int(
-            os.environ.get(
-                "FEATURE_READ_REQUESTS_PER_MINUTE",
-                "120"
-            )
-        ),
-        AUTH_LOGIN_REQUESTS_PER_MINUTE=int(
-            os.environ.get(
-                "AUTH_LOGIN_REQUESTS_PER_MINUTE",
-                "10",
-            )
-        ),
-        AUTH_SIGNUP_REQUESTS_PER_MINUTE=int(
-            os.environ.get(
-                "AUTH_SIGNUP_REQUESTS_PER_MINUTE",
-                "5",
-            )
-        ),
-        AUTH_SIGNUP_REQUESTS_PER_DAY=int(
-            os.environ.get(
-                "AUTH_SIGNUP_REQUESTS_PER_DAY",
-                "10",
-            )
-        ),
+        FEATURE_WRITE_REQUESTS_PER_MINUTE=int(os.environ.get("FEATURE_WRITE_REQUESTS_PER_MINUTE", "30")),
+        FEATURE_READ_REQUESTS_PER_MINUTE=int(os.environ.get("FEATURE_READ_REQUESTS_PER_MINUTE", "120")),
     )
-
     if test_config is not None:
         app.config.update(test_config)
     _validate_production_secrets(app.config)
