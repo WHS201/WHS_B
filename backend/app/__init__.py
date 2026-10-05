@@ -84,6 +84,12 @@ def create_app(test_config=None):
         "KAKAO_REDIRECT_URI"
     )
 
+    app.config["TURNSTILE_SECRET_KEY"] = (
+        os.environ.get(
+            "TURNSTILE_SECRET_KEY"
+        )
+    )
+
     app.config.update(
         MAX_CONTENT_LENGTH=51 * 1024 * 1024,
         FEATURE_RATE_LIMIT_ENABLED=True,

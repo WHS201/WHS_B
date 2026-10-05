@@ -5,6 +5,7 @@ export async function signup(
   username,
   password,
   nickname,
+  turnstileToken,
 ) {
   const response = await api.post(
     '/auth/signup',
@@ -12,6 +13,7 @@ export async function signup(
       username,
       password,
       nickname,
+      turnstile_token: turnstileToken,
     },
   )
 

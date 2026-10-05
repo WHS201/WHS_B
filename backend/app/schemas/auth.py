@@ -67,6 +67,11 @@ class SignupSchema(Schema):
         ),
     )
 
+    turnstile_token = fields.String(
+        required=True,
+        load_only=True,
+    )
+
     @validates("username")
     def validate_username(
         self,
@@ -95,6 +100,17 @@ class SignupSchema(Schema):
         if value.strip() == "":
             raise ValidationError(
                 "닉네임은 공백만으로 구성할 수 없습니다."
+            )
+
+    @validates("turnstile_token")
+    def validate_turnstile_token(
+        self,
+        value,
+        **kwargs,
+    ):
+        if value.strip() == "":
+            raise ValidationError(
+                "CAPTCHA 인증 정보가 필요합니다."
             )
 
 

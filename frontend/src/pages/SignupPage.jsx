@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useRef,
   useState,
 } from 'react'
 
@@ -54,6 +55,16 @@ function SignupPage() {
     setLoading,
   ] = useState(false)
 
+  const turnstileRef =
+    useRef(null)
+
+  const turnstileWidgetIdRef =
+    useRef(null)
+
+  const [
+    turnstileToken,
+    setTurnstileToken,
+  ] = useState('')
 
   useEffect(() => {
     if (isLoggedIn()) {
@@ -66,6 +77,64 @@ function SignupPage() {
     }
   }, [navigate])
 
+  useEffect(() => {
+    const renderTurnstile = () => {
+      if (
+        !window.turnstile ||
+        !turnstileRef.current ||
+        turnstileWidgetIdRef.current !== null
+      ) {
+        return
+      }
+
+      turnstileWidgetIdRef.current =
+        window.turnstile.render(
+          turnstileRef.current,
+          {
+            sitekey:
+              import.meta.env
+                .VITE_TURNSTILE_SITE_KEY,
+
+            action: 'signup',
+
+            callback: (token) => {
+              setTurnstileToken(token)
+            },
+
+            'expired-callback': () => {
+              setTurnstileToken('')
+            },
+
+            'error-callback': () => {
+              setTurnstileToken('')
+            },
+          },
+        )
+    }
+
+    renderTurnstile()
+
+    const intervalId =
+      window.setInterval(() => {
+        renderTurnstile()
+      }, 100)
+
+    return () => {
+      window.clearInterval(intervalId)
+
+      if (
+        window.turnstile &&
+        turnstileWidgetIdRef.current !== null
+      ) {
+        window.turnstile.remove(
+          turnstileWidgetIdRef.current,
+        )
+
+        turnstileWidgetIdRef.current =
+          null
+      }
+    }
+  }, [])
 
   const handleSignup =
     async (event) => {
@@ -96,6 +165,13 @@ function SignupPage() {
         return
       }
 
+      if (!turnstileToken) {
+        setErrorMessage(
+          'CAPTCHA 인증을 완료해주세요.',
+        )
+
+        return
+      }
 
       try {
         setLoading(true)
@@ -105,6 +181,7 @@ function SignupPage() {
           username,
           password,
           nickname,
+          turnstileToken,
         )
 
         showToast(
@@ -123,7 +200,19 @@ function SignupPage() {
         setErrorMessage(
           message,
         )
+
+        setTurnstileToken('')
+
+        if (
+          window.turnstile &&
+          turnstileWidgetIdRef.current !== null
+        ) {
+          window.turnstile.reset(
+            turnstileWidgetIdRef.current,
+          )
+        }
       } finally {
+
         setLoading(false)
       }
     }
@@ -255,6 +344,9 @@ function SignupPage() {
 
             </div>
 
+            <div
+              ref={turnstileRef}
+            />
 
             {errorMessage && (
               <p className="error-message">

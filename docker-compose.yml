@@ -46,6 +46,7 @@ services:
       KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY}
       KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET}
       KAKAO_REDIRECT_URI: ${KAKAO_REDIRECT_URI}
+      TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY}
       FSS_API_KEY: ${FSS_API_KEY}
       RUN_DB_UPGRADE: "1"
     # 기본 CMD(gunicorn) 사용
@@ -79,6 +80,7 @@ services:
       args:
         VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID}
         VITE_KAKAO_REST_API_KEY: ${VITE_KAKAO_REST_API_KEY}
+        VITE_TURNSTILE_SITE_KEY: ${VITE_TURNSTILE_SITE_KEY}
     restart: unless-stopped
     depends_on:
       - backend

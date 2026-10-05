@@ -1,4 +1,6 @@
 import time
+import requests
+
 from flask import (
     Blueprint,
     current_app,
@@ -44,6 +46,55 @@ def _client_ip():
         or "unknown"
     )
 
+def _verify_turnstile(token):
+    secret_key = current_app.config.get(
+        "TURNSTILE_SECRET_KEY"
+    )
+
+    if not secret_key:
+        raise BusinessException(
+            code="CAPTCHA_CONFIG_ERROR",
+            message="CAPTCHA 설정을 확인할 수 없습니다.",
+            status_code=503,
+        )
+
+    try:
+        response = requests.post(
+            (
+                "https://challenges.cloudflare.com/"
+                "turnstile/v0/siteverify"
+            ),
+            data={
+                "secret": secret_key,
+                "response": token,
+                "remoteip": _client_ip(),
+            },
+            timeout=5,
+        )
+
+        response.raise_for_status()
+
+        result = response.json()
+
+    except (
+        requests.RequestException,
+        ValueError,
+    ):
+        raise BusinessException(
+            code="CAPTCHA_VERIFY_FAILED",
+            message="CAPTCHA 검증 중 오류가 발생했습니다.",
+            status_code=503,
+        )
+
+    if (
+        not result.get("success")
+        or result.get("action") != "signup"
+    ):
+        raise BusinessException(
+            code="INVALID_CAPTCHA",
+            message="CAPTCHA 인증에 실패했습니다.",
+            status_code=400,
+        )
 
 def _login_rate_limit():
     limit = current_app.config.get(
@@ -187,11 +238,15 @@ def _token_response(result, message, status_code=200):
 
 @auth_bp.post("/signup")
 def signup():
-    _signup_rate_limit()
-    
     payload = SignupSchema().load(
         request.get_json(silent=True) or {}
     )
+
+    _verify_turnstile(
+        payload["turnstile_token"]
+    )
+
+    _signup_rate_limit()
 
     result = auth_service.signup(
         username=payload["username"],

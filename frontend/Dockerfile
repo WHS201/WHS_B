@@ -13,6 +13,7 @@ COPY . .
 # OAuth 클라이언트 ID 등은 빌드타임에 주입된다 (vite: import.meta.env.VITE_*)
 ARG VITE_GOOGLE_CLIENT_ID
 ARG VITE_KAKAO_REST_API_KEY
+ARG VITE_TURNSTILE_SITE_KEY
 RUN npm run build
 
 # --- runtime stage: nginx 로 정적 파일 서빙 + /api 프록시 ---
